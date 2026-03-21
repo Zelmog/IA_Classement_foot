@@ -36,7 +36,8 @@ def _log(msg: str) -> None:
 def _create_chrome_driver():
     """
     Crée un driver Selenium compatible Chrome ou Chromium.
-    Utilise Chromium si disponible (Docker/Linux), sinon Chrome + webdriver-manager.
+    Utilise Chromium si disponible (Docker/Linux/Streamlit Cloud),
+    sinon Chrome + webdriver-manager (Windows/local).
     """
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
@@ -50,11 +51,24 @@ def _create_chrome_driver():
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--log-level=3")
 
-    # Vérifier si Chromium est disponible (Docker / Linux)
+    # Vérifier si Chromium est disponible (Docker / Linux / Streamlit Cloud)
     chromium_bin = os.environ.get("CHROME_BIN")
     chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
 
+    # Auto-detect Chromium sur Linux si pas de variable d'environnement
+    if not chromium_bin:
+        for path in ["/usr/bin/chromium", "/usr/bin/chromium-browser"]:
+            if os.path.isfile(path):
+                chromium_bin = path
+                break
+    if not chromedriver_path:
+        for path in ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver"]:
+            if os.path.isfile(path):
+                chromedriver_path = path
+                break
+
     if chromium_bin and os.path.isfile(chromium_bin):
+        _log(f"  Chromium detecte: {chromium_bin}")
         options.binary_location = chromium_bin
         service = Service(executable_path=chromedriver_path) if chromedriver_path else Service()
     else:
