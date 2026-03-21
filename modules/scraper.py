@@ -33,6 +33,39 @@ def _log(msg: str) -> None:
         print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 
+def _create_chrome_driver():
+    """
+    Crée un driver Selenium compatible Chrome ou Chromium.
+    Utilise Chromium si disponible (Docker/Linux), sinon Chrome + webdriver-manager.
+    """
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--log-level=3")
+
+    # Vérifier si Chromium est disponible (Docker / Linux)
+    chromium_bin = os.environ.get("CHROME_BIN")
+    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
+
+    if chromium_bin and os.path.isfile(chromium_bin):
+        options.binary_location = chromium_bin
+        service = Service(executable_path=chromedriver_path) if chromedriver_path else Service()
+    else:
+        # Windows / local : utiliser webdriver-manager
+        from webdriver_manager.chrome import ChromeDriverManager
+        options.add_experimental_option("excludeSwitches", ["enable-logging"])
+        service = Service(ChromeDriverManager().install())
+
+    return webdriver.Chrome(service=service, options=options)
+
+
 def scrape_ranking(url: str = COMPETITION_URL) -> List[Team]:
     """
     Récupère le classement depuis le site de la FFF.
@@ -78,33 +111,17 @@ def _scrape_with_selenium(url: str) -> Optional[List[Team]]:
         Liste de Team ou None si échec.
     """
     try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
-        from webdriver_manager.chrome import ChromeDriverManager
     except ImportError:
-        _log("⚠️  Selenium ou webdriver-manager non installé.")
-        _log("   Installez avec : pip install selenium webdriver-manager")
+        _log("⚠️  Selenium non installé.")
         return None
 
     driver = None
     try:
         _log("🌐 Lancement du navigateur headless...")
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--log-level=3")
-        # Supprimer les messages de log inutiles
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = _create_chrome_driver()
 
         _log(f"📡 Chargement de la page...")
         driver.get(url)
@@ -497,13 +514,9 @@ def _scrape_calendar_selenium(
         Liste de Fixture ou None.
     """
     try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
-        from webdriver_manager.chrome import ChromeDriverManager
     except ImportError:
         _log("⚠️  Selenium non installé.")
         return None
@@ -511,17 +524,7 @@ def _scrape_calendar_selenium(
     driver = None
     try:
         _log("🌐 Lancement du navigateur pour le calendrier...")
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--log-level=3")
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = _create_chrome_driver()
 
         _log("📅 Chargement du calendrier...")
         driver.get(url)
@@ -1193,13 +1196,9 @@ def scrape_results(
     results_url = _build_results_url(url)
 
     try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import Select, WebDriverWait
-        from webdriver_manager.chrome import ChromeDriverManager
     except ImportError:
         _log("⚠️  Selenium non installé.")
         return None
@@ -1209,17 +1208,7 @@ def scrape_results(
 
     try:
         _log("🌐 Lancement du navigateur pour les résultats...")
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--log-level=3")
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = _create_chrome_driver()
 
         driver.get(results_url)
         time.sleep(3)
