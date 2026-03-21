@@ -66,7 +66,7 @@ def _create_chrome_driver():
     return webdriver.Chrome(service=service, options=options)
 
 
-def scrape_ranking(url: str = COMPETITION_URL) -> List[Team]:
+def scrape_ranking(url: str = COMPETITION_URL, external_driver=None) -> List[Team]:
     """
     Récupère le classement depuis le site de la FFF.
 
@@ -75,6 +75,7 @@ def scrape_ranking(url: str = COMPETITION_URL) -> List[Team]:
 
     Args:
         url: URL de la page de classement.
+        external_driver: Driver Selenium existant (optionnel, pour réutilisation).
 
     Returns:
         Liste d'objets Team triés par classement.
@@ -83,7 +84,7 @@ def scrape_ranking(url: str = COMPETITION_URL) -> List[Team]:
         RuntimeError: Si aucune méthode de récupération ne fonctionne.
     """
     # Tentative 1 : Scraping web
-    teams = _scrape_with_selenium(url)
+    teams = _scrape_with_selenium(url, external_driver=external_driver)
     if teams:
         _save_backup(teams)
         return teams
@@ -100,12 +101,13 @@ def scrape_ranking(url: str = COMPETITION_URL) -> List[Team]:
     return _get_demo_data()
 
 
-def _scrape_with_selenium(url: str) -> Optional[List[Team]]:
+def _scrape_with_selenium(url: str, external_driver=None) -> Optional[List[Team]]:
     """
     Scrape le classement en utilisant Selenium (Chrome headless).
 
     Args:
         url: URL de la page à scraper.
+        external_driver: Driver Selenium existant (optionnel, pour réutilisation).
 
     Returns:
         Liste de Team ou None si échec.
@@ -118,10 +120,14 @@ def _scrape_with_selenium(url: str) -> Optional[List[Team]]:
         _log("⚠️  Selenium non installé.")
         return None
 
+    own_driver = external_driver is None
     driver = None
     try:
-        _log("🌐 Lancement du navigateur headless...")
-        driver = _create_chrome_driver()
+        if own_driver:
+            _log("🌐 Lancement du navigateur headless...")
+            driver = _create_chrome_driver()
+        else:
+            driver = external_driver
 
         _log(f"📡 Chargement de la page...")
         driver.get(url)
@@ -154,7 +160,7 @@ def _scrape_with_selenium(url: str) -> Optional[List[Team]]:
         return None
 
     finally:
-        if driver:
+        if own_driver and driver:
             driver.quit()
 
 
@@ -475,6 +481,7 @@ def _build_calendar_url(ranking_url: str) -> str:
 def scrape_calendar(
     url: str = COMPETITION_URL,
     team_names: Optional[List[str]] = None,
+    external_driver=None,
 ) -> Optional[List[Fixture]]:
     """
     Récupère le calendrier complet depuis le site de la FFF.
@@ -482,12 +489,13 @@ def scrape_calendar(
     Args:
         url: URL de la page de classement (sera convertie en URL calendrier).
         team_names: Liste des noms d'équipes connus (pour le matching).
+        external_driver: Driver Selenium existant (optionnel).
 
     Returns:
         Liste de Fixture ou None si échec.
     """
     calendar_url = _build_calendar_url(url)
-    fixtures = _scrape_calendar_selenium(calendar_url, team_names, original_url=url)
+    fixtures = _scrape_calendar_selenium(calendar_url, team_names, original_url=url, external_driver=external_driver)
 
     if fixtures:
         return fixtures
@@ -501,6 +509,7 @@ def _scrape_calendar_selenium(
     url: str,
     team_names: Optional[List[str]] = None,
     original_url: str = COMPETITION_URL,
+    external_driver=None,
 ) -> Optional[List[Fixture]]:
     """
     Scrape le calendrier via Selenium.
@@ -509,6 +518,7 @@ def _scrape_calendar_selenium(
         url: URL de la page calendrier.
         team_names: Noms d'équipes pour le matching.
         original_url: URL de classement d'origine (pour extraire la poule).
+        external_driver: Driver Selenium existant (optionnel).
 
     Returns:
         Liste de Fixture ou None.
@@ -521,10 +531,14 @@ def _scrape_calendar_selenium(
         _log("⚠️  Selenium non installé.")
         return None
 
+    own_driver = external_driver is None
     driver = None
     try:
-        _log("🌐 Lancement du navigateur pour le calendrier...")
-        driver = _create_chrome_driver()
+        if own_driver:
+            _log("🌐 Lancement du navigateur pour le calendrier...")
+            driver = _create_chrome_driver()
+        else:
+            driver = external_driver
 
         _log("📅 Chargement du calendrier...")
         driver.get(url)
@@ -608,7 +622,7 @@ def _scrape_calendar_selenium(
         return None
 
     finally:
-        if driver:
+        if own_driver and driver:
             driver.quit()
 
 
@@ -1178,17 +1192,16 @@ def scrape_results(
     url: str = COMPETITION_URL,
     team_names: Optional[List[str]] = None,
     max_journee: int = 22,
+    external_driver=None,
 ) -> Optional[List[Fixture]]:
     """
     Scrape les résultats (avec scores) de toutes les journées jouées.
-
-    Le site FFF affiche les scores sous forme d'images dans l'URL :
-    /img/scores/origin/X.png → score = X
 
     Args:
         url: URL de la page classement (sera convertie en résultats).
         team_names: Liste des noms d'équipes connus.
         max_journee: Nombre max de journées à scraper.
+        external_driver: Driver Selenium existant (optionnel).
 
     Returns:
         Liste de Fixture avec les scores remplis, ou None.
@@ -1203,12 +1216,16 @@ def scrape_results(
         _log("⚠️  Selenium non installé.")
         return None
 
+    own_driver = external_driver is None
     driver = None
     all_fixtures: List[Fixture] = []
 
     try:
-        _log("🌐 Lancement du navigateur pour les résultats...")
-        driver = _create_chrome_driver()
+        if own_driver:
+            _log("🌐 Lancement du navigateur pour les résultats...")
+            driver = _create_chrome_driver()
+        else:
+            driver = external_driver
 
         driver.get(results_url)
         time.sleep(3)
@@ -1285,8 +1302,61 @@ def scrape_results(
         return all_fixtures if all_fixtures else None
 
     finally:
-        if driver:
+        if own_driver and driver:
             driver.quit()
+
+
+def scrape_competition(url: str):
+    """
+    Scrape classement + résultats + calendrier avec UN SEUL navigateur.
+
+    Optimise la consommation mémoire et le temps de chargement en évitant
+    de lancer 3 instances Chromium séparées.
+
+    Args:
+        url: URL de la page de classement FFF.
+
+    Returns:
+        Tuple (teams, result_fixtures, calendar_fixtures).
+        Chaque élément peut être None en cas d'échec.
+    """
+    _log(f"🌐 Lancement du navigateur unique pour: {url}")
+    driver = _create_chrome_driver()
+    teams = None
+    result_fixtures = None
+    calendar_fixtures = None
+
+    try:
+        # 1. Classement
+        teams = scrape_ranking(url, external_driver=driver)
+        if not teams:
+            _log("❌ Impossible de charger le classement, arrêt.")
+            return None, None, None
+
+        team_names = [t.name for t in teams]
+        _log(f"✅ {len(teams)} équipes: {', '.join(team_names[:4])}...")
+
+        # 2. Résultats
+        try:
+            result_fixtures = scrape_results(url, team_names, external_driver=driver)
+        except Exception as e:
+            _log(f"⚠️  Erreur résultats (non bloquant): {e}")
+
+        # 3. Calendrier
+        try:
+            calendar_fixtures = scrape_calendar(url, team_names, external_driver=driver)
+        except Exception as e:
+            _log(f"⚠️  Erreur calendrier (non bloquant): {e}")
+
+        return teams, result_fixtures, calendar_fixtures
+
+    except Exception as e:
+        _log(f"❌ Erreur scraping compétition: {e}")
+        return teams, result_fixtures, calendar_fixtures
+
+    finally:
+        driver.quit()
+        _log("🌐 Navigateur fermé.")
 
 
 def _parse_results_html(

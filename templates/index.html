@@ -7,6 +7,21 @@
 {% if not teams %}
 <div class="row justify-content-center mt-4">
     <div class="col-12 col-md-8 col-lg-6">
+        {% if loading_status and loading_status.step in ('scraping', 'processing') %}
+        <div class="card text-center p-4">
+            <h4 class="mb-3"><i class="bi bi-hourglass-split text-warning"></i> Chargement en cours...</h4>
+            <p class="text-secondary mb-3">
+                {{ loading_status.message }}
+            </p>
+            <div class="spinner-border text-primary mb-3" role="status">
+                <span class="visually-hidden">Chargement...</span>
+            </div>
+            <p class="text-secondary small">
+                La page se rafraîchira automatiquement.
+            </p>
+        </div>
+        <script>setTimeout(function() { location.reload(); }, 8000);</script>
+        {% else %}
         <div class="card text-center p-4">
             <h4 class="mb-3"><i class="bi bi-trophy text-warning"></i> IA Classement Foot</h4>
             <p class="text-secondary mb-4">
@@ -24,6 +39,7 @@
                 <i class="bi bi-download me-1"></i> Charger le classement
             </button>
         </div>
+        {% endif %}
     </div>
 </div>
 

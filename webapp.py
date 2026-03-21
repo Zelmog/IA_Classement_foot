@@ -31,6 +31,7 @@ from modules.scraper import (
     scrape_ranking,
     scrape_calendar,
     scrape_results,
+    scrape_competition,
     compute_team_stats,
     get_remaining_fixtures,
     get_calendar_summary,
@@ -106,7 +107,10 @@ state = AppState()
 states: Dict[str, AppState] = {}
 for _key, _comp in COMPETITIONS.items():
     states[_key] = AppState(url=_comp["url"])
-
+# Suivi du chargement en arrière-plan
+loading_status: Dict[str, Dict] = {
+    k: {"step": "idle", "message": "En attente"} for k in COMPETITIONS
+}
 
 def get_state(key: str) -> AppState:
     """Retourne l'état de la compétition ou la première par défaut."""
@@ -179,6 +183,7 @@ def index(key: str):
         relegation_spots=st.settings["relegation_spots"],
         comp_key=key,
         competitions=COMPETITIONS,
+        loading_status=loading_status.get(key, {}),
     )
 
 
@@ -379,60 +384,58 @@ def api_predict(key: str):
     return jsonify({"status": "ok", "redirect": f"/{key}/"})
 
 
+@app.route("/api/status")
+def api_loading_status():
+    """Retourne le statut de chargement de chaque compétition."""
+    return jsonify(loading_status)
+
+
 # ─── Démarrage ────────────────────────────────────────────────
 
 def startup_load():
     """Charge toutes les données au démarrage pour chaque compétition."""
     for key, comp in COMPETITIONS.items():
         st = states[key]
+        loading_status[key] = {"step": "scraping", "message": f"Chargement {comp['name']}..."}
         print(f"\n{'='*50}")
-        print(f"📡 Chargement {comp['name']} ({key})...")
+        print(f"Chargement {comp['name']} ({key}) - URL: {st.url}")
         print(f"{'='*50}")
 
+        # Scraping complet avec UN SEUL navigateur
+        teams, result_fixtures, calendar_fixtures = scrape_competition(st.url)
+
         # 1. Classement
-        teams = scrape_ranking(url=st.url)
         if teams:
             st.teams = teams
             st.auto_detect_total_matches()
-            print(f"✅ {len(teams)} équipes chargées.")
+            team_names = [t.name for t in teams]
+            print(f"  Equipes {key}: {', '.join(team_names[:4])}...")
+            loading_status[key] = {"step": "processing", "message": f"{len(teams)} equipes chargees"}
         else:
-            print(f"⚠️  Pas de données pour {comp['name']}.")
+            loading_status[key] = {"step": "error", "message": "Echec du chargement"}
+            print(f"  ERREUR: Pas de donnees pour {comp['name']}")
             continue
 
-        team_names = [t.name for t in st.teams]
-
-        # 2. Résultats détaillés
-        try:
-            print("📊 Chargement des résultats...")
-            result_fixtures = scrape_results(st.url, team_names)
-            if result_fixtures:
-                played = [f for f in result_fixtures if f.played]
-                st.team_stats = compute_team_stats(played, team_names)
-                print(f"✅ Résultats chargés : {len(played)} matchs.")
-            else:
-                print("⚠️  Aucun résultat trouvé.")
-        except Exception as e:
-            print(f"⚠️  Erreur résultats : {e}")
+        # 2. Résultats
+        if result_fixtures:
+            played = [f for f in result_fixtures if f.played]
+            st.team_stats = compute_team_stats(played, team_names)
+            print(f"  Resultats {key}: {len(played)} matchs joues")
 
         # 3. Calendrier
-        try:
-            print("📅 Chargement du calendrier...")
-            fixtures = scrape_calendar(st.url, team_names)
-            if fixtures:
-                st.fixtures = fixtures
-                summary = get_calendar_summary(fixtures)
-                print(
-                    f"✅ Calendrier chargé : {summary['total_matches']} matchs "
-                    f"({summary['played']} joués, {summary['remaining']} restants)"
-                )
-            else:
-                print("⚠️  Aucun match trouvé dans le calendrier.")
-        except Exception as e:
-            print(f"⚠️  Erreur calendrier : {e}")
+        if calendar_fixtures:
+            st.fixtures = calendar_fixtures
+            summary = get_calendar_summary(calendar_fixtures)
+            print(f"  Calendrier {key}: {summary['total_matches']} matchs ({summary['played']} joues)")
 
         # 4. Prédiction
-        st.run_prediction()
-        print(f"✅ Prédiction calculée pour {comp['name']}.")
+        try:
+            st.run_prediction()
+            loading_status[key] = {"step": "done", "message": "Chargement termine"}
+            print(f"  Prediction {key} OK")
+        except Exception as e:
+            print(f"  ERREUR prediction {key}: {e}")
+            loading_status[key] = {"step": "done", "message": "Donnees chargees (prediction echouee)"}
 
 
 if __name__ == "__main__":
