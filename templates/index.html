@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}IA Classement Foot - Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ─── Si aucune équipe chargée ─── -->
+{% if not teams %}
+<div class="row justify-content-center mt-4">
+    <div class="col-12 col-md-8 col-lg-6">
+        <div class="card text-center p-4">
+            <h4 class="mb-3"><i class="bi bi-trophy text-warning"></i> IA Classement Foot</h4>
+            <p class="text-secondary mb-4">
+                Prédictions de montée / descente par simulation Monte Carlo.
+            </p>
+
+            <div class="mb-3">
+                <label class="form-label text-secondary small">URL de la compétition FFF</label>
+                <input type="url" class="form-control bg-dark border-secondary text-light" id="urlInput"
+                       value="{{ url }}" placeholder="https://gironde.fff.fr/competitions?...">
+            </div>
+
+            <button class="btn btn-primary btn-action w-100"
+                    onclick="var fd = new FormData(); fd.append('url', document.getElementById('urlInput').value); apiActionForm('/{{ comp_key }}/api/load-ranking', fd, '📡 Scraping du classement...');">
+                <i class="bi bi-download me-1"></i> Charger le classement
+            </button>
+        </div>
+    </div>
+</div>
+
+{% else %}
+
+<!-- ─── Stats rapides ─── -->
+<div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+            <div class="stat-value">{{ teams|length }}</div>
+            <div class="stat-label">Équipes</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+            <div class="stat-value">{{ "%.0f"|format(season_progress) }}%</div>
+            <div class="stat-label">Saison</div>
+            <div class="progress mt-1">
+                <div class="progress-bar progress-bar-season" style="width: {{ season_progress }}%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+            <div class="stat-value text-success">{{ promotion_spots }}</div>
+            <div class="stat-label">Montées</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+            <div class="stat-value text-danger">{{ relegation_spots }}</div>
+            <div class="stat-label">Descentes</div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Actions ─── -->
+<div class="card mb-3">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-gear me-1"></i> Actions</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#actionsPanel">
+            <i class="bi bi-chevron-down"></i>
+        </button>
+    </div>
+    <div class="collapse show" id="actionsPanel">
+        <div class="card-body">
+            <div class="d-flex flex-wrap gap-2">
+                <button class="btn btn-outline-primary btn-action"
+                        onclick="apiAction('/{{ comp_key }}/api/load-ranking', '📡 Scraping du classement...')">
+                    <i class="bi bi-arrow-clockwise me-1"></i> Rafraîchir classement
+                </button>
+                <button class="btn btn-outline-info btn-action"
+                        onclick="apiAction('/{{ comp_key }}/api/load-calendar', '📅 Chargement du calendrier... (peut prendre 30s)')">
+                    <i class="bi bi-calendar3 me-1"></i> Charger calendrier
+                </button>
+                <button class="btn btn-outline-warning btn-action"
+                        onclick="apiAction('/{{ comp_key }}/api/load-results', '📊 Chargement des résultats... (peut prendre 1-2min)')">
+                    <i class="bi bi-bar-chart me-1"></i> Charger résultats
+                </button>
+                <button class="btn btn-outline-success btn-action"
+                        onclick="apiAction('/{{ comp_key }}/api/predict', '🎲 Simulation Monte Carlo (50 000 itérations)...')">
+                    <i class="bi bi-dice-5 me-1"></i> Recalculer prédiction
+                </button>
+            </div>
+
+            {% if calendar_summary %}
+            <div class="mt-2 small text-secondary">
+                <i class="bi bi-check-circle text-success me-1"></i>
+                Calendrier : {{ calendar_summary.played }} joués / {{ calendar_summary.remaining }} restants
+                (J{{ calendar_summary.current_matchday }}/{{ calendar_summary.total_matchdays }})
+            </div>
+            {% endif %}
+
+            {% if team_stats %}
+            <div class="mt-1 small text-secondary">
+                <i class="bi bi-check-circle text-success me-1"></i>
+                Stats détaillées chargées pour {{ team_stats|length }} équipes
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ─── Classement + Prédictions ─── -->
+<div class="card mb-3">
+    <div class="card-header">
+        <i class="bi bi-list-ol me-1"></i> Classement &amp; Prédictions
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Équipe</th>
+                    <th class="text-center">Pts</th>
+                    <th class="text-center">MJ</th>
+                    <th class="text-center">V</th>
+                    <th class="text-center">N</th>
+                    <th class="text-center">D</th>
+                    <th class="text-center">Diff</th>
+                    {% if predictions %}
+                    <th class="text-center">Montée</th>
+                    <th class="text-center">Descente</th>
+                    <th class="text-center">Pos moy</th>
+                    {% endif %}
+                    {% if team_stats %}
+                    <th class="text-center">Forme</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for team in teams %}
+                {% set pred = pred_map.get(team.name) if pred_map else None %}
+                {% set ts = team_stats[team.name] if team_stats and team.name in team_stats else None %}
+                <tr class="{{ 'promo-row' if team.rank <= promotion_spots else ('releg-row' if team.rank > teams|length - relegation_spots else '') }}">
+                    <td>
+                        <span class="fw-bold {% if team.rank <= promotion_spots %}text-success{% elif team.rank > teams|length - relegation_spots %}text-danger{% endif %}">
+                            {{ team.rank }}
+                        </span>
+                    </td>
+                    <td>
+                        <a href="/{{ comp_key }}/equipe/{{ team.name|urlencode }}" class="team-link">{{ team.name }}</a>
+                    </td>
+                    <td class="text-center fw-bold">{{ team.points }}</td>
+                    <td class="text-center text-secondary">{{ team.matches_played }}</td>
+                    <td class="text-center text-success">{{ team.wins }}</td>
+                    <td class="text-center text-warning">{{ team.draws }}</td>
+                    <td class="text-center text-danger">{{ team.losses }}</td>
+                    <td class="text-center {% if team.goal_difference > 0 %}text-success{% elif team.goal_difference < 0 %}text-danger{% else %}text-secondary{% endif %}">
+                        {{ '%+d'|format(team.goal_difference) }}
+                    </td>
+                    {% if predictions %}
+                    <td class="text-center">
+                        {% if pred %}
+                        <div class="d-flex flex-column align-items-center">
+                            <span class="fw-bold {% if pred.promotion_probability >= 70 %}text-success{% elif pred.promotion_probability >= 40 %}text-warning{% else %}text-secondary{% endif %}">
+                                {{ "%.1f"|format(pred.promotion_probability) }}%
+                            </span>
+                            <div class="progress w-100 mt-1" style="height: 4px; max-width: 60px;">
+                                <div class="progress-bar progress-bar-promo" style="width: {{ pred.promotion_probability }}%"></div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        {% if pred %}
+                        <span class="{% if pred.relegation_probability >= 40 %}text-danger{% elif pred.relegation_probability >= 15 %}text-warning{% else %}text-secondary{% endif %}">
+                            {{ "%.1f"|format(pred.relegation_probability) }}%
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        {% if pred %}
+                        <span class="text-secondary">{{ "%.1f"|format(pred.avg_final_position) }}</span>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                    {% if team_stats %}
+                    <td class="text-center">
+                        {% if ts %}
+                            {% for r in ts.recent_results[-5:] %}
+                            <span class="form-badge form-{{ r }}">{{ r }}</span>
+                            {% endfor %}
+                        {% else %}
+                        <span class="text-secondary">-</span>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── Légende ─── -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap gap-3 small text-secondary">
+            <span><span class="border-start border-3 border-success ps-2">Zone de montée</span></span>
+            <span><span class="border-start border-3 border-danger ps-2">Zone de descente</span></span>
+            <span><span class="form-badge form-V">V</span> Victoire</span>
+            <span><span class="form-badge form-N">N</span> Nul</span>
+            <span><span class="form-badge form-D">D</span> Défaite</span>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
