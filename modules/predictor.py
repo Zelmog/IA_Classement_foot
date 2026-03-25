@@ -9,6 +9,7 @@ Approche inspirée des méthodes utilisées par FiveThirtyEight et Opta.
 """
 
 import copy
+import time
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -380,9 +381,11 @@ class PromotionPredictor:
                 elif pos >= n_teams - self.relegation_spots:
                     relegation_count[name] += 1
 
-            # Callback de progression
-            if progress_callback and (sim + 1) % max(1, self.n_simulations // 100) == 0:
-                progress_callback(sim + 1, self.n_simulations)
+            # Callback de progression + yield GIL pour laisser les threads HTTP répondre
+            if (sim + 1) % max(1, self.n_simulations // 100) == 0:
+                if progress_callback:
+                    progress_callback(sim + 1, self.n_simulations)
+                time.sleep(0)
 
         # Construire les résultats
         results = []

@@ -680,14 +680,13 @@ def display_team_form_stats(
     )
 
     table.add_column("Cl.", justify="center", width=4)
-    table.add_column("Équipe", ratio=1)
-    table.add_column("Forme", justify="center", width=8)
-    table.add_column("Série", justify="center", width=8)
-    table.add_column("Dom. G/N/P", justify="center", width=12)
-    table.add_column("Dom. BP/BC", justify="center", width=10)
-    table.add_column("Ext. G/N/P", justify="center", width=12)
-    table.add_column("Ext. BP/BC", justify="center", width=10)
-    table.add_column("Forfaits", justify="center", width=8)
+    table.add_column("Équipe", min_width=18, no_wrap=True)
+    table.add_column("Forme", justify="center", width=7)
+    table.add_column("Série", justify="center", width=7)
+    table.add_column("Dom. G/N/P", justify="center", width=9)
+    table.add_column("Dom. BP/BC", justify="center", width=8)
+    table.add_column("Ext. G/N/P", justify="center", width=9)
+    table.add_column("Ext. BP/BC", justify="center", width=8)
 
     for team in teams:
         stats = team_stats.get(team.name)
@@ -722,8 +721,6 @@ def display_team_form_stats(
         away_gnp = f"{stats.away_wins}/{stats.away_draws}/{stats.away_losses}"
         away_goals = f"{stats.away_goals_for}/{stats.away_goals_against}"
 
-        forfait_str = str(stats.forfeits_given) if stats.forfeits_given > 0 else "-"
-
         table.add_row(
             str(team.rank),
             team.name,
@@ -733,7 +730,6 @@ def display_team_form_stats(
             home_goals,
             away_gnp,
             away_goals,
-            forfait_str,
         )
 
     console.print(table)

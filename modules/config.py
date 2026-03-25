@@ -62,7 +62,7 @@ LOSS_POINTS = 0
 # ============================================================
 
 # Temps d'attente maximum (secondes) pour le chargement de la page
-SCRAPER_TIMEOUT = 15
+SCRAPER_TIMEOUT = 120
 
 # Fichier de sauvegarde des données scrapées (fallback)
 DATA_BACKUP_FILE = "data/dernier_classement.json"

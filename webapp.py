@@ -2,453 +2,307 @@
 IA Classement Foot - Application Web
 =====================================
 
-Serveur Flask fournissant une interface web responsive (mobile-first)
-pour visualiser les classements, prédictions et statistiques.
+Serveur Flask qui expose l'IA de prédiction via une interface web.
+Destiné à être déployé sur un serveur Oracle Cloud.
 
 Usage:
-    python webapp.py
-    python webapp.py --port 8080
-    python webapp.py --host 0.0.0.0    (accessible sur le réseau local)
+    python webapp.py                    # Démarre sur http://0.0.0.0:5000
+    python webapp.py --port 8080        # Port personnalisé
+    gunicorn webapp:app -b 0.0.0.0:5000 --workers 2 --timeout 300
 """
 
 import argparse
+import json
 import threading
+import time
+from dataclasses import asdict
 from typing import Dict, List, Optional
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, render_template, request
 
-from modules.config import (
-    COMPETITIONS,
-    COMPETITION_URL,
-    N_SIMULATIONS,
-    PROMOTION_SPOTS,
-    RELEGATION_SPOTS,
-    TOTAL_MATCHES_PER_TEAM,
-)
+from modules.config import COMPETITIONS, N_SIMULATIONS, PROMOTION_SPOTS, RELEGATION_SPOTS, TOTAL_MATCHES_PER_TEAM
 from modules.models import Fixture, PredictionResult, Team, TeamStats
 from modules.predictor import PromotionPredictor
 from modules.scraper import (
-    scrape_ranking,
-    scrape_calendar,
-    scrape_results,
-    scrape_competition,
     compute_team_stats,
-    get_remaining_fixtures,
     get_calendar_summary,
-    load_from_backup,
+    get_remaining_fixtures,
+    scrape_competition,
 )
 
 app = Flask(__name__)
 
-# ─── État global de l'application ─────────────────────────────
-class AppState:
-    """Stocke les données partagées entre les routes."""
+# ── État global par compétition ──────────────────────────────────────
+class CompetitionState:
+    """Stocke les données d'une compétition."""
 
-    def __init__(self, url: str = COMPETITION_URL):
-        self.url: str = url
+    def __init__(self, key: str, name: str, url: str):
+        self.key = key
+        self.name = name
+        self.url = url
         self.teams: List[Team] = []
+        self.predictions: Optional[List[PredictionResult]] = None
         self.fixtures: Optional[List[Fixture]] = None
         self.team_stats: Optional[Dict[str, TeamStats]] = None
-        self.predictions: Optional[List[PredictionResult]] = None
-        self.predictor: Optional[PromotionPredictor] = None
-        self.settings = {
-            "n_simulations": N_SIMULATIONS,
-            "total_matches": TOTAL_MATCHES_PER_TEAM,
-            "promotion_spots": PROMOTION_SPOTS,
-            "relegation_spots": RELEGATION_SPOTS,
-        }
-        self.loading: Dict[str, bool] = {
-            "ranking": False,
-            "calendar": False,
-            "results": False,
-            "prediction": False,
-        }
-        self.messages: List[Dict] = []  # {"type": "success"|"error"|"info", "text": "..."}
+        self.season_progress: float = 0.0
+        self.calendar_summary: Optional[dict] = None
+        self.loading = False
+        self.last_update: Optional[str] = None
+        self.error: Optional[str] = None
 
-    def add_message(self, msg_type: str, text: str):
-        self.messages.append({"type": msg_type, "text": text})
 
-    def pop_messages(self) -> List[Dict]:
-        msgs = self.messages[:]
-        self.messages.clear()
-        return msgs
+# Initialiser les compétitions
+states: Dict[str, CompetitionState] = {}
+for key, info in COMPETITIONS.items():
+    states[key] = CompetitionState(key, info["name"], info["url"])
 
-    def auto_detect_total_matches(self):
-        if not self.teams:
+
+# ── Fonctions utilitaires ────────────────────────────────────────────
+def _load_competition(state: CompetitionState) -> None:
+    """Charge toutes les données d'une compétition (scraping + prédiction)."""
+    state.loading = True
+    state.error = None
+
+    try:
+        teams, result_fixtures, calendar_fixtures = scrape_competition(state.url)
+
+        if not teams:
+            state.error = "Impossible de charger le classement."
+            state.loading = False
             return
-        n = len(self.teams)
-        max_played = max(t.matches_played for t in self.teams)
-        single = n - 1
-        double = 2 * (n - 1)
-        self.settings["total_matches"] = double if max_played > single else single
 
-    def run_prediction(self):
-        if not self.teams:
-            return
+        state.teams = teams
+
+        # Détection auto du nombre de matchs
+        n_teams = len(teams)
+        max_played = max(t.matches_played for t in teams)
+        single_round = n_teams - 1
+        double_round = 2 * (n_teams - 1)
+        total_matches = double_round if max_played > single_round else single_round
+
+        # Stats détaillées
+        if result_fixtures:
+            played = [f for f in result_fixtures if f.played]
+            team_names = [t.name for t in teams]
+            state.team_stats = compute_team_stats(played, team_names)
+
+        # Calendrier
+        if calendar_fixtures:
+            state.fixtures = calendar_fixtures
+            state.calendar_summary = get_calendar_summary(calendar_fixtures)
+
+        # Prédiction
         real_fixtures = None
-        if self.fixtures:
-            real_fixtures = get_remaining_fixtures(self.fixtures)
+        if state.fixtures:
+            real_fixtures = get_remaining_fixtures(state.fixtures)
 
-        self.predictor = PromotionPredictor(
-            teams=self.teams,
-            total_matches=self.settings["total_matches"],
-            n_simulations=self.settings["n_simulations"],
-            promotion_spots=self.settings["promotion_spots"],
-            relegation_spots=self.settings["relegation_spots"],
+        predictor = PromotionPredictor(
+            teams=teams,
+            total_matches=total_matches,
+            n_simulations=N_SIMULATIONS,
+            promotion_spots=PROMOTION_SPOTS,
+            relegation_spots=RELEGATION_SPOTS,
             fixtures=real_fixtures,
-            team_stats=self.team_stats,
+            team_stats=state.team_stats,
         )
-        self.predictions = self.predictor.simulate()
+
+        state.season_progress = predictor.get_season_progress()
+        state.predictions = predictor.simulate()
+
+        state.last_update = time.strftime("%d/%m/%Y %H:%M")
+
+    except Exception as e:
+        state.error = str(e)
+    finally:
+        state.loading = False
 
 
-state = AppState()
-
-# ─── États multi-compétition ─────────────────────────────────
-states: Dict[str, AppState] = {}
-for _key, _comp in COMPETITIONS.items():
-    states[_key] = AppState(url=_comp["url"])
-# Suivi du chargement en arrière-plan
-loading_status: Dict[str, Dict] = {
-    k: {"step": "idle", "message": "En attente"} for k in COMPETITIONS
-}
-
-def get_state(key: str) -> AppState:
-    """Retourne l'état de la compétition ou la première par défaut."""
-    return states.get(key, next(iter(states.values())))
-
-
-def comp_keys():
-    """Liste des clés de compétition pour les templates."""
-    return list(COMPETITIONS.keys())
+def _team_to_dict(team: Team) -> dict:
+    return {
+        "rank": team.rank,
+        "name": team.name,
+        "points": team.points,
+        "matches_played": team.matches_played,
+        "wins": team.wins,
+        "draws": team.draws,
+        "losses": team.losses,
+        "goals_for": team.goals_for,
+        "goals_against": team.goals_against,
+        "goal_difference": team.goal_difference,
+        "points_per_match": round(team.points_per_match, 2),
+    }
 
 
-# ─── Chargement automatique au démarrage (fonctionne avec gunicorn) ───
-_startup_done = False
+def _prediction_to_dict(pred: PredictionResult) -> dict:
+    return {
+        "team_name": pred.team_name,
+        "current_rank": pred.current_rank,
+        "current_points": pred.current_points,
+        "matches_played": pred.matches_played,
+        "matches_remaining": pred.matches_remaining,
+        "promotion_probability": round(pred.promotion_probability, 1),
+        "relegation_probability": round(pred.relegation_probability, 1),
+        "avg_final_position": round(pred.avg_final_position, 1),
+        "predicted_final_points": round(pred.predicted_final_points, 1),
+        "promotion_emoji": pred.promotion_emoji,
+        "relegation_emoji": pred.relegation_emoji,
+    }
 
-def _auto_startup():
-    global _startup_done
-    if not _startup_done:
-        _startup_done = True
-        loader = threading.Thread(target=startup_load, daemon=True)
-        loader.start()
+
+def _stats_to_dict(stats: TeamStats) -> dict:
+    return {
+        "name": stats.name,
+        "form_score": round(stats.form_score, 1),
+        "form_label": stats.form_label,
+        "home_wins": stats.home_wins,
+        "home_draws": stats.home_draws,
+        "home_losses": stats.home_losses,
+        "home_goals_for": stats.home_goals_for,
+        "home_goals_against": stats.home_goals_against,
+        "away_wins": stats.away_wins,
+        "away_draws": stats.away_draws,
+        "away_losses": stats.away_losses,
+        "away_goals_for": stats.away_goals_for,
+        "away_goals_against": stats.away_goals_against,
+        "home_ppg": round(stats.home_ppg, 2),
+        "away_ppg": round(stats.away_ppg, 2),
+    }
 
 
-@app.before_request
-def ensure_startup():
-    _auto_startup()
-
-
-# ─── Routes de pages ──────────────────────────────────────────
-
+# ── Routes HTML ──────────────────────────────────────────────────────
 @app.route("/")
-def root():
-    """Redirige vers la première compétition."""
+def index():
+    """Page d'accueil — redirige vers la première compétition."""
     first_key = next(iter(COMPETITIONS))
-    return redirect(f"/{first_key}/")
+    return render_template(
+        "index.html",
+        competitions=COMPETITIONS,
+        current_key=first_key,
+        states=states,
+    )
 
 
 @app.route("/<key>/")
-def index(key: str):
-    """Page principale: dashboard complet."""
+def competition(key):
+    """Dashboard d'une compétition."""
     if key not in states:
-        return redirect("/")
-    st = get_state(key)
-    messages = st.pop_messages()
-    season_progress = 0.0
-    if st.predictor:
-        season_progress = st.predictor.get_season_progress()
+        return render_template("404.html", competitions=COMPETITIONS), 404
 
-    calendar_summary = None
-    if st.fixtures:
-        calendar_summary = get_calendar_summary(st.fixtures)
-
-    pred_map = {}
-    if st.predictions:
-        for p in st.predictions:
-            pred_map[p.team_name] = p
-
+    state = states[key]
     return render_template(
-        "index.html",
-        teams=st.teams,
-        predictions=st.predictions,
-        pred_map=pred_map,
-        team_stats=st.team_stats,
-        season_progress=season_progress,
-        calendar_summary=calendar_summary,
-        url=st.url,
-        settings=st.settings,
-        loading=st.loading,
-        messages=messages,
-        promotion_spots=st.settings["promotion_spots"],
-        relegation_spots=st.settings["relegation_spots"],
-        comp_key=key,
+        "dashboard.html",
         competitions=COMPETITIONS,
-        loading_status=loading_status.get(key, {}),
+        current_key=key,
+        state=state,
+        teams=[_team_to_dict(t) for t in state.teams],
+        predictions=[_prediction_to_dict(p) for p in state.predictions] if state.predictions else [],
+        team_stats={name: _stats_to_dict(s) for name, s in state.team_stats.items()} if state.team_stats else {},
+        calendar_summary=state.calendar_summary,
     )
 
 
 @app.route("/<key>/equipe/<team_name>")
-def team_detail(key: str, team_name: str):
-    """Page détail d'une équipe."""
+def team_detail(key, team_name):
+    """Page détaillée d'une équipe."""
     if key not in states:
-        return redirect("/")
-    st = get_state(key)
-    messages = st.pop_messages()
-    team = next((t for t in st.teams if t.name == team_name), None)
+        return render_template("404.html", competitions=COMPETITIONS), 404
+
+    state = states[key]
+    team = next((t for t in state.teams if t.name == team_name), None)
+    prediction = next((p for p in (state.predictions or []) if p.team_name == team_name), None)
+    stats = state.team_stats.get(team_name) if state.team_stats else None
+
     if not team:
-        return render_template("404.html", message=f"Équipe '{team_name}' non trouvée."), 404
-
-    analysis = None
-    prediction = None
-    if st.predictor and st.predictions:
-        analysis = st.predictor.get_team_analysis(team_name)
-        prediction = next((p for p in st.predictions if p.team_name == team_name), None)
-
-    ts = st.team_stats.get(team_name) if st.team_stats else None
+        return render_template("404.html", competitions=COMPETITIONS), 404
 
     return render_template(
         "team.html",
-        team=team,
-        analysis=analysis,
-        prediction=prediction,
-        team_stat=ts,
-        messages=messages,
-        comp_key=key,
         competitions=COMPETITIONS,
+        current_key=key,
+        state=state,
+        team=_team_to_dict(team),
+        prediction=_prediction_to_dict(prediction) if prediction else None,
+        stats=_stats_to_dict(stats) if stats else None,
     )
 
 
-@app.route("/<key>/forme")
-def form_page(key: str):
-    """Page forme des équipes."""
+# ── Routes API ───────────────────────────────────────────────────────
+@app.route("/api/<key>/status")
+def api_status(key):
+    """État de chargement d'une compétition."""
     if key not in states:
-        return redirect("/")
-    st = get_state(key)
-    messages = st.pop_messages()
-    return render_template(
-        "forme.html",
-        teams=st.teams,
-        team_stats=st.team_stats,
-        messages=messages,
-        comp_key=key,
-        competitions=COMPETITIONS,
-    )
+        return jsonify({"error": "Compétition inconnue"}), 404
+    state = states[key]
+    return jsonify({
+        "loading": state.loading,
+        "has_data": bool(state.teams),
+        "last_update": state.last_update,
+        "error": state.error,
+        "team_count": len(state.teams),
+    })
 
 
-@app.route("/<key>/calendrier")
-def calendar_page(key: str):
-    """Page calendrier / matchs restants."""
+@app.route("/api/<key>/load", methods=["POST"])
+def api_load(key):
+    """Lance le chargement d'une compétition en arrière-plan."""
     if key not in states:
-        return redirect("/")
-    st = get_state(key)
-    messages = st.pop_messages()
-    all_fixtures = []
-    if st.fixtures:
-        all_fixtures = sorted(st.fixtures, key=lambda f: (f.matchday, f.date))
+        return jsonify({"error": "Compétition inconnue"}), 404
 
-    calendar_summary = None
-    if st.fixtures:
-        calendar_summary = get_calendar_summary(st.fixtures)
+    state = states[key]
+    if state.loading:
+        return jsonify({"status": "already_loading"})
 
-    return render_template(
-        "calendrier.html",
-        fixtures=all_fixtures,
-        calendar_summary=calendar_summary,
-        messages=messages,
-        comp_key=key,
-        competitions=COMPETITIONS,
-    )
+    thread = threading.Thread(target=_load_competition, args=(state,), daemon=True)
+    thread.start()
+    return jsonify({"status": "started"})
 
 
-# ─── Routes API (actions) ────────────────────────────────────
+@app.route("/api/<key>/data")
+def api_data(key):
+    """Renvoie toutes les données d'une compétition en JSON."""
+    if key not in states:
+        return jsonify({"error": "Compétition inconnue"}), 404
 
-@app.route("/<key>/api/load-ranking", methods=["POST"])
-def api_load_ranking(key: str):
-    """Charge le classement depuis le site FFF."""
-    st = get_state(key)
-    if st.loading["ranking"]:
-        return jsonify({"status": "busy", "message": "Chargement déjà en cours..."})
+    state = states[key]
+    return jsonify({
+        "loading": state.loading,
+        "error": state.error,
+        "last_update": state.last_update,
+        "season_progress": round(state.season_progress, 1),
+        "teams": [_team_to_dict(t) for t in state.teams],
+        "predictions": [_prediction_to_dict(p) for p in state.predictions] if state.predictions else [],
+        "team_stats": {name: _stats_to_dict(s) for name, s in state.team_stats.items()} if state.team_stats else {},
+        "calendar_summary": state.calendar_summary,
+    })
 
-    url = request.form.get("url", st.url).strip()
-    if url:
-        st.url = url
 
-    st.loading["ranking"] = True
-    try:
-        teams = scrape_ranking(url=st.url)
-        if teams:
-            st.teams = teams
-            st.auto_detect_total_matches()
-            st.add_message("success", f"{len(teams)} équipes chargées.")
-            st.run_prediction()
-            st.add_message("success", "Prédiction calculée.")
+# ── Chargement automatique au démarrage ──────────────────────────────
+def _auto_startup():
+    """Charge toutes les compétitions au démarrage du serveur."""
+    time.sleep(2)  # Laisser le serveur démarrer
+    for key, state in states.items():
+        print(f"⏳ Chargement auto : {state.name}...")
+        _load_competition(state)
+        if state.error:
+            print(f"❌ Erreur {state.name}: {state.error}")
         else:
-            teams = load_from_backup()
-            if teams:
-                st.teams = teams
-                st.auto_detect_total_matches()
-                st.add_message("info", "Données chargées depuis le backup.")
-                st.run_prediction()
-            else:
-                st.add_message("error", "Impossible de charger le classement.")
-    except Exception as e:
-        st.add_message("error", f"Erreur: {e}")
-    finally:
-        st.loading["ranking"] = False
-
-    return jsonify({"status": "ok", "redirect": f"/{key}/"})
+            print(f"✅ {state.name} chargé ({len(state.teams)} équipes)")
 
 
-@app.route("/<key>/api/load-calendar", methods=["POST"])
-def api_load_calendar(key: str):
-    """Charge le calendrier réel."""
-    st = get_state(key)
-    if st.loading["calendar"]:
-        return jsonify({"status": "busy", "message": "Chargement déjà en cours..."})
-    if not st.teams:
-        st.add_message("error", "Chargez d'abord le classement.")
-        return jsonify({"status": "error", "redirect": f"/{key}/"})
-
-    st.loading["calendar"] = True
-    try:
-        team_names = [t.name for t in st.teams]
-        fixtures = scrape_calendar(st.url, team_names)
-        if fixtures:
-            st.fixtures = fixtures
-            summary = get_calendar_summary(fixtures)
-            st.add_message(
-                "success",
-                f"Calendrier chargé : {summary['total_matches']} matchs "
-                f"({summary['played']} joués, {summary['remaining']} restants)"
-            )
-            st.run_prediction()
-            st.add_message("success", "Prédiction recalculée avec le calendrier.")
-        else:
-            st.add_message("error", "Aucun match trouvé.")
-    except Exception as e:
-        st.add_message("error", f"Erreur calendrier: {e}")
-    finally:
-        st.loading["calendar"] = False
-
-    return jsonify({"status": "ok", "redirect": f"/{key}/calendrier"})
+# Lancer le chargement au démarrage
+startup_thread = threading.Thread(target=_auto_startup, daemon=True)
+startup_thread.start()
 
 
-@app.route("/<key>/api/load-results", methods=["POST"])
-def api_load_results(key: str):
-    """Charge les résultats détaillés."""
-    st = get_state(key)
-    if st.loading["results"]:
-        return jsonify({"status": "busy", "message": "Chargement déjà en cours..."})
-    if not st.teams:
-        st.add_message("error", "Chargez d'abord le classement.")
-        return jsonify({"status": "error", "redirect": f"/{key}/"})
-
-    st.loading["results"] = True
-    try:
-        team_names = [t.name for t in st.teams]
-        result_fixtures = scrape_results(st.url, team_names)
-        if result_fixtures:
-            played = [f for f in result_fixtures if f.played]
-            st.team_stats = compute_team_stats(played, team_names)
-            st.add_message(
-                "success",
-                f"Résultats chargés : {len(played)} matchs. "
-                f"Stats calculées pour {len(st.team_stats)} équipes."
-            )
-            st.run_prediction()
-            st.add_message("success", "Prédiction recalculée avec les stats détaillées.")
-        else:
-            st.add_message("error", "Aucun résultat trouvé.")
-    except Exception as e:
-        st.add_message("error", f"Erreur résultats: {e}")
-    finally:
-        st.loading["results"] = False
-
-    return jsonify({"status": "ok", "redirect": f"/{key}/forme"})
-
-
-@app.route("/<key>/api/predict", methods=["POST"])
-def api_predict(key: str):
-    """Relance la prédiction."""
-    st = get_state(key)
-    if not st.teams:
-        st.add_message("error", "Aucune donnée chargée.")
-        return jsonify({"status": "error", "redirect": f"/{key}/"})
-
-    try:
-        st.run_prediction()
-        st.add_message("success", "Prédiction recalculée.")
-    except Exception as e:
-        st.add_message("error", f"Erreur prédiction: {e}")
-
-    return jsonify({"status": "ok", "redirect": f"/{key}/"})
-
-
-@app.route("/api/status")
-def api_loading_status():
-    """Retourne le statut de chargement de chaque compétition."""
-    return jsonify(loading_status)
-
-
-# ─── Démarrage ────────────────────────────────────────────────
-
-def startup_load():
-    """Charge toutes les données au démarrage pour chaque compétition."""
-    for key, comp in COMPETITIONS.items():
-        st = states[key]
-        loading_status[key] = {"step": "scraping", "message": f"Chargement {comp['name']}..."}
-        print(f"\n{'='*50}")
-        print(f"Chargement {comp['name']} ({key}) - URL: {st.url}")
-        print(f"{'='*50}")
-
-        # Scraping complet avec UN SEUL navigateur
-        teams, result_fixtures, calendar_fixtures = scrape_competition(st.url)
-
-        # 1. Classement
-        if teams:
-            st.teams = teams
-            st.auto_detect_total_matches()
-            team_names = [t.name for t in teams]
-            print(f"  Equipes {key}: {', '.join(team_names[:4])}...")
-            loading_status[key] = {"step": "processing", "message": f"{len(teams)} equipes chargees"}
-        else:
-            loading_status[key] = {"step": "error", "message": "Echec du chargement"}
-            print(f"  ERREUR: Pas de donnees pour {comp['name']}")
-            continue
-
-        # 2. Résultats
-        if result_fixtures:
-            played = [f for f in result_fixtures if f.played]
-            st.team_stats = compute_team_stats(played, team_names)
-            print(f"  Resultats {key}: {len(played)} matchs joues")
-
-        # 3. Calendrier
-        if calendar_fixtures:
-            st.fixtures = calendar_fixtures
-            summary = get_calendar_summary(calendar_fixtures)
-            print(f"  Calendrier {key}: {summary['total_matches']} matchs ({summary['played']} joues)")
-
-        # 4. Prédiction
-        try:
-            st.run_prediction()
-            loading_status[key] = {"step": "done", "message": "Chargement termine"}
-            print(f"  Prediction {key} OK")
-        except Exception as e:
-            print(f"  ERREUR prediction {key}: {e}")
-            loading_status[key] = {"step": "done", "message": "Donnees chargees (prediction echouee)"}
-
-
+# ── Point d'entrée ───────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="IA Classement Foot - Web")
+    parser = argparse.ArgumentParser(description="IA Foot - Serveur Web")
     parser.add_argument("--host", default="0.0.0.0", help="Adresse d'écoute")
     parser.add_argument("--port", type=int, default=5000, help="Port")
-    parser.add_argument("--debug", action="store_true", help="Mode debug Flask")
+    parser.add_argument("--debug", action="store_true", help="Mode debug")
     args = parser.parse_args()
 
-    print(f"\n🌐 Application web démarrée !")
-    print(f"   Local:   http://127.0.0.1:{args.port}")
-    print(f"   Réseau:  http://0.0.0.0:{args.port}")
-    print(f"   (Sur téléphone, utilisez l'IP de votre PC)")
-    print(f"   ⏳ Chargement des données en arrière-plan...\n")
+    print(f"\n⚽ IA Classement Foot - Serveur Web")
+    print(f"   http://{args.host}:{args.port}\n")
 
     app.run(host=args.host, port=args.port, debug=args.debug)

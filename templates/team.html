@@ -1,254 +1,171 @@
 {% extends "base.html" %}
-{% block title %}{{ team.name }} - IA Classement Foot{% endblock %}
+{% block title %}{{ team.name }} — IA Foot{% endblock %}
 
 {% block content %}
-
 <!-- Breadcrumb -->
-<nav aria-label="breadcrumb" class="mb-3">
-    <ol class="breadcrumb small mb-0">
-        <li class="breadcrumb-item"><a href="/{{ comp_key }}/" class="text-secondary">Dashboard</a></li>
-        <li class="breadcrumb-item active text-light">{{ team.name }}</li>
-    </ol>
+<nav class="mt-2 mb-3">
+    <a href="/{{ current_key }}/" class="text-muted text-decoration-none">
+        <i class="bi bi-arrow-left"></i> {{ state.name }}
+    </a>
 </nav>
 
-<!-- ─── En-tête équipe ─── -->
-<div class="card mb-3">
-    <div class="card-body">
-        <div class="d-flex justify-content-between align-items-start">
-            <div>
-                <h4 class="mb-1 fw-bold">{{ team.name }}</h4>
-                <div class="text-secondary">
-                    {{ team.rank }}{{ 'er' if team.rank == 1 else 'e' }} - {{ team.points }} points ({{ team.matches_played }} matchs)
+<div class="d-flex flex-wrap align-items-center gap-3 mb-4">
+    <h3 class="fw-bold mb-0">{{ team.name }}</h3>
+    <span class="badge bg-secondary fs-6">{{ team.rank }}{{ 'er' if team.rank == 1 else 'e' }}</span>
+    {% if prediction %}
+        {% if prediction.promotion_probability >= 50 %}
+        <span class="badge badge-promo">{{ prediction.promotion_emoji }} {{ prediction.promotion_probability }}% montée</span>
+        {% endif %}
+        {% if prediction.relegation_probability >= 20 %}
+        <span class="badge badge-releg">{{ prediction.relegation_emoji }} {{ prediction.relegation_probability }}% descente</span>
+        {% endif %}
+    {% endif %}
+</div>
+
+<div class="row g-3">
+    <!-- Statistiques générales -->
+    <div class="col-md-6">
+        <div class="card-dark h-100">
+            <div class="card-header px-3 py-2">
+                <i class="bi bi-bar-chart-fill"></i> Statistiques générales
+            </div>
+            <div class="card-body p-3">
+                <div class="row g-3">
+                    <div class="col-4 stat-card">
+                        <div class="stat-value text-primary">{{ team.points }}</div>
+                        <div class="stat-label">Points</div>
+                    </div>
+                    <div class="col-4 stat-card">
+                        <div class="stat-value">{{ team.matches_played }}</div>
+                        <div class="stat-label">Matchs joués</div>
+                    </div>
+                    <div class="col-4 stat-card">
+                        <div class="stat-value {% if team.goal_difference > 0 %}text-success{% elif team.goal_difference < 0 %}text-danger{% endif %}">
+                            {{ '+' if team.goal_difference > 0 }}{{ team.goal_difference }}
+                        </div>
+                        <div class="stat-label">Diff. buts</div>
+                    </div>
                 </div>
+                <hr style="border-color: var(--card-border);">
+                <table class="table table-dark-custom table-sm mb-0">
+                    <tr><td class="text-muted">Victoires</td><td class="text-end text-success fw-bold">{{ team.wins }}</td></tr>
+                    <tr><td class="text-muted">Nuls</td><td class="text-end text-warning fw-bold">{{ team.draws }}</td></tr>
+                    <tr><td class="text-muted">Défaites</td><td class="text-end text-danger fw-bold">{{ team.losses }}</td></tr>
+                    <tr><td class="text-muted">Buts marqués</td><td class="text-end">{{ team.goals_for }}</td></tr>
+                    <tr><td class="text-muted">Buts encaissés</td><td class="text-end">{{ team.goals_against }}</td></tr>
+                    <tr><td class="text-muted">Points/match</td><td class="text-end">{{ team.points_per_match }}</td></tr>
+                </table>
             </div>
-            {% if prediction %}
-            <div class="text-end">
-                <div class="stat-value {% if prediction.promotion_probability >= 60 %}text-success{% elif prediction.promotion_probability >= 30 %}text-warning{% else %}text-danger{% endif %}">
-                    {{ "%.1f"|format(prediction.promotion_probability) }}%
+        </div>
+    </div>
+
+    <!-- Prédictions -->
+    {% if prediction %}
+    <div class="col-md-6">
+        <div class="card-dark h-100">
+            <div class="card-header px-3 py-2">
+                <i class="bi bi-graph-up-arrow"></i> Prédictions IA
+            </div>
+            <div class="card-body p-3">
+                <div class="row g-3 mb-3">
+                    <div class="col-6 stat-card">
+                        <div class="stat-value" style="color: var(--accent-green);">{{ prediction.predicted_final_points }}</div>
+                        <div class="stat-label">Pts prédits</div>
+                    </div>
+                    <div class="col-6 stat-card">
+                        <div class="stat-value text-info">{{ prediction.avg_final_position }}</div>
+                        <div class="stat-label">Position moy.</div>
+                    </div>
                 </div>
-                <div class="stat-label">Chances de montée</div>
-            </div>
-            {% endif %}
-        </div>
-    </div>
-</div>
 
-<!-- ─── Statistiques ─── -->
-<div class="row g-2 mb-3">
-    <div class="col-4">
-        <div class="card p-3 text-center">
-            <div class="stat-value text-success">{{ team.wins }}</div>
-            <div class="stat-label">Victoires</div>
-        </div>
-    </div>
-    <div class="col-4">
-        <div class="card p-3 text-center">
-            <div class="stat-value text-warning">{{ team.draws }}</div>
-            <div class="stat-label">Nuls</div>
-        </div>
-    </div>
-    <div class="col-4">
-        <div class="card p-3 text-center">
-            <div class="stat-value text-danger">{{ team.losses }}</div>
-            <div class="stat-label">Défaites</div>
-        </div>
-    </div>
-</div>
-
-<div class="row g-2 mb-3">
-    <div class="col-4">
-        <div class="card p-3 text-center">
-            <div class="stat-value">{{ team.goals_for }}</div>
-            <div class="stat-label">Buts marqués</div>
-        </div>
-    </div>
-    <div class="col-4">
-        <div class="card p-3 text-center">
-            <div class="stat-value">{{ team.goals_against }}</div>
-            <div class="stat-label">Buts encaissés</div>
-        </div>
-    </div>
-    <div class="col-4">
-        <div class="card p-3 text-center">
-            <div class="stat-value {% if team.goal_difference > 0 %}text-success{% elif team.goal_difference < 0 %}text-danger{% endif %}">
-                {{ '%+d'|format(team.goal_difference) }}
-            </div>
-            <div class="stat-label">Diff. buts</div>
-        </div>
-    </div>
-</div>
-
-<!-- ─── Analyse détaillée ─── -->
-{% if analysis %}
-<div class="card mb-3">
-    <div class="card-header">
-        <i class="bi bi-bar-chart me-1"></i> Analyse détaillée
-    </div>
-    <div class="card-body">
-        <div class="row g-3">
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Points/match</div>
-                <div class="fw-bold">{{ analysis.points_per_match }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Buts/match</div>
-                <div class="fw-bold">{{ analysis.goals_per_match }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Encaissés/match</div>
-                <div class="fw-bold">{{ analysis.goals_conceded_per_match }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Force offensive</div>
-                <div class="fw-bold">{{ analysis.attack_strength }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Force défensive</div>
-                <div class="fw-bold">{{ analysis.defense_strength }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Taux de victoire</div>
-                <div class="fw-bold">{{ analysis.win_rate }}%</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Matchs restants</div>
-                <div class="fw-bold">{{ analysis.matches_remaining }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Points max possibles</div>
-                <div class="fw-bold">{{ analysis.max_possible_points }}</div>
-            </div>
-            <div class="col-6 col-md-4">
-                <div class="small text-secondary">Forme globale</div>
-                <div class="fw-bold">{{ analysis.form_rating }}</div>
-            </div>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- ─── Stats dom/ext détaillées ─── -->
-{% if team_stat %}
-<div class="card mb-3">
-    <div class="card-header">
-        <i class="bi bi-house me-1"></i> Domicile / Extérieur
-    </div>
-    <div class="card-body">
-        <div class="row g-3">
-            <!-- Domicile -->
-            <div class="col-12 col-md-6">
-                <h6 class="text-success mb-2"><i class="bi bi-house-fill me-1"></i>Domicile</h6>
-                <div class="table-responsive">
-                    <table class="table table-sm">
-                        <tr>
-                            <td class="text-secondary">Bilan</td>
-                            <td class="fw-bold">
-                                <span class="text-success">{{ team_stat.home_wins }}V</span>
-                                <span class="text-warning">{{ team_stat.home_draws }}N</span>
-                                <span class="text-danger">{{ team_stat.home_losses }}D</span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td class="text-secondary">Buts</td>
-                            <td class="fw-bold">{{ team_stat.home_goals_for }} BP / {{ team_stat.home_goals_against }} BC</td>
-                        </tr>
-                        <tr>
-                            <td class="text-secondary">Points/match</td>
-                            <td class="fw-bold">{{ "%.2f"|format(team_stat.home_ppg) }}</td>
-                        </tr>
-                    </table>
+                <!-- Montée -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="small">Montée {{ prediction.promotion_emoji }}</span>
+                        <span class="fw-bold {% if prediction.promotion_probability >= 50 %}text-success{% endif %}">
+                            {{ prediction.promotion_probability }}%
+                        </span>
+                    </div>
+                    <div class="progress-thin">
+                        <div class="progress-bar bg-success" style="width: {{ prediction.promotion_probability }}%"></div>
+                    </div>
                 </div>
+
+                <!-- Descente -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="small">Descente {{ prediction.relegation_emoji }}</span>
+                        <span class="fw-bold {% if prediction.relegation_probability >= 50 %}text-danger{% endif %}">
+                            {{ prediction.relegation_probability }}%
+                        </span>
+                    </div>
+                    <div class="progress-thin">
+                        <div class="progress-bar bg-danger" style="width: {{ prediction.relegation_probability }}%"></div>
+                    </div>
+                </div>
+
+                <hr style="border-color: var(--card-border);">
+                <table class="table table-dark-custom table-sm mb-0">
+                    <tr><td class="text-muted">Matchs restants</td><td class="text-end">{{ prediction.matches_remaining }}</td></tr>
+                </table>
             </div>
-            <!-- Extérieur -->
-            <div class="col-12 col-md-6">
-                <h6 class="text-info mb-2"><i class="bi bi-geo-alt-fill me-1"></i>Extérieur</h6>
-                <div class="table-responsive">
-                    <table class="table table-sm">
-                        <tr>
-                            <td class="text-secondary">Bilan</td>
-                            <td class="fw-bold">
-                                <span class="text-success">{{ team_stat.away_wins }}V</span>
-                                <span class="text-warning">{{ team_stat.away_draws }}N</span>
-                                <span class="text-danger">{{ team_stat.away_losses }}D</span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td class="text-secondary">Buts</td>
-                            <td class="fw-bold">{{ team_stat.away_goals_for }} BP / {{ team_stat.away_goals_against }} BC</td>
-                        </tr>
-                        <tr>
-                            <td class="text-secondary">Points/match</td>
-                            <td class="fw-bold">{{ "%.2f"|format(team_stat.away_ppg) }}</td>
-                        </tr>
-                    </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Forme détaillée -->
+    {% if stats %}
+    <div class="col-12">
+        <div class="card-dark">
+            <div class="card-header px-3 py-2">
+                <i class="bi bi-fire"></i> Forme & Performances
+            </div>
+            <div class="card-body p-3">
+                <div class="row g-4">
+                    <!-- Forme récente -->
+                    <div class="col-md-4 text-center">
+                        <div class="stat-label mb-2">Forme récente</div>
+                        <div class="mb-2">
+                            {% for c in stats.form_label %}
+                            <span class="form-dot form-{{ c }}">{{ c }}</span>
+                            {% endfor %}
+                        </div>
+                        <div class="fs-4 fw-bold {% if stats.form_score >= 2.2 %}text-success{% elif stats.form_score >= 1.2 %}text-warning{% else %}text-danger{% endif %}">
+                            {{ stats.form_score }}/3.0
+                        </div>
+                    </div>
+                    <!-- Domicile -->
+                    <div class="col-md-4">
+                        <div class="stat-label mb-2 text-center">
+                            <i class="bi bi-house-fill"></i> Domicile
+                        </div>
+                        <table class="table table-dark-custom table-sm mb-0">
+                            <tr><td class="text-muted">Victoires</td><td class="text-end text-success">{{ stats.home_wins }}</td></tr>
+                            <tr><td class="text-muted">Nuls</td><td class="text-end text-warning">{{ stats.home_draws }}</td></tr>
+                            <tr><td class="text-muted">Défaites</td><td class="text-end text-danger">{{ stats.home_losses }}</td></tr>
+                            <tr><td class="text-muted">Buts marqués</td><td class="text-end">{{ stats.home_goals_for }}</td></tr>
+                            <tr><td class="text-muted">Buts encaissés</td><td class="text-end">{{ stats.home_goals_against }}</td></tr>
+                            <tr><td class="text-muted">Pts/match</td><td class="text-end">{{ stats.home_ppg }}</td></tr>
+                        </table>
+                    </div>
+                    <!-- Extérieur -->
+                    <div class="col-md-4">
+                        <div class="stat-label mb-2 text-center">
+                            <i class="bi bi-geo-alt-fill"></i> Extérieur
+                        </div>
+                        <table class="table table-dark-custom table-sm mb-0">
+                            <tr><td class="text-muted">Victoires</td><td class="text-end text-success">{{ stats.away_wins }}</td></tr>
+                            <tr><td class="text-muted">Nuls</td><td class="text-end text-warning">{{ stats.away_draws }}</td></tr>
+                            <tr><td class="text-muted">Défaites</td><td class="text-end text-danger">{{ stats.away_losses }}</td></tr>
+                            <tr><td class="text-muted">Buts marqués</td><td class="text-end">{{ stats.away_goals_for }}</td></tr>
+                            <tr><td class="text-muted">Buts encaissés</td><td class="text-end">{{ stats.away_goals_against }}</td></tr>
+                            <tr><td class="text-muted">Pts/match</td><td class="text-end">{{ stats.away_ppg }}</td></tr>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
-
-<!-- ─── Forme récente ─── -->
-<div class="card mb-3">
-    <div class="card-header">
-        <i class="bi bi-fire me-1"></i> Forme récente
-    </div>
-    <div class="card-body">
-        <div class="mb-2">
-            <span class="small text-secondary">Score de forme : </span>
-            <span class="fw-bold">{{ "%.2f"|format(team_stat.form_score) }} / 3.00</span>
-        </div>
-        <div class="d-flex flex-wrap gap-1">
-            {% for r in team_stat.recent_results %}
-            <span class="form-badge form-{{ r }}">{{ r }}</span>
-            {% endfor %}
-        </div>
-        <div class="small text-secondary mt-2">
-            ← Plus ancien &nbsp;&nbsp; Plus récent →
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- ─── Prédiction détaillée (distribution positions) ─── -->
-{% if prediction and prediction.position_probabilities %}
-<div class="card mb-3">
-    <div class="card-header">
-        <i class="bi bi-dice-5 me-1"></i> Distribution des positions finales
-    </div>
-    <div class="card-body">
-        <div class="row g-2 mb-2">
-            <div class="col-6">
-                <div class="small text-secondary">Position finale moyenne</div>
-                <div class="fw-bold fs-5">{{ "%.1f"|format(prediction.avg_final_position) }}</div>
-            </div>
-            <div class="col-6">
-                <div class="small text-secondary">Points finaux prédits</div>
-                <div class="fw-bold fs-5">{{ "%.0f"|format(prediction.predicted_final_points) }}</div>
-            </div>
-        </div>
-
-        {% for prob in prediction.position_probabilities %}
-        {% set pos = loop.index %}
-        <div class="d-flex align-items-center gap-2 mb-1">
-            <span class="small text-secondary" style="width: 25px; text-align: right;">{{ pos }}.</span>
-            <div class="progress flex-grow-1" style="height: 20px;">
-                <div class="progress-bar {% if pos <= 2 %}progress-bar-promo{% elif pos > prediction.position_probabilities|length - 2 %}progress-bar-releg{% else %}bg-secondary{% endif %}"
-                     style="width: {{ prob }}%;">
-                    {% if prob > 5 %}{{ "%.1f"|format(prob) }}%{% endif %}
-                </div>
-            </div>
-            <span class="small text-secondary" style="width: 45px; text-align: right;">{{ "%.1f"|format(prob) }}%</span>
-        </div>
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
-<!-- Retour -->
-<div class="text-center mb-3">
-    <a href="/" class="btn btn-outline-secondary btn-action">
-        <i class="bi bi-arrow-left me-1"></i> Retour au classement
-    </a>
-</div>
-
 {% endblock %}

@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}{{ state.name }} — IA Foot{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-3 mt-2">
+    <div>
+        <h3 class="fw-bold mb-0">{{ state.name }}</h3>
+        {% if state.last_update %}
+        <small class="text-muted">Mis à jour le {{ state.last_update }}</small>
+        {% endif %}
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="refreshData('{{ current_key }}')">
+        <i class="bi bi-arrow-clockwise"></i> Actualiser
+    </button>
+</div>
+
+{% if not state.teams %}
+<div class="card-dark p-5 text-center">
+    {% if state.loading %}
+        <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;"></div>
+        <h5>Chargement en cours...</h5>
+        <p class="text-muted">Scraping du classement et simulation Monte Carlo</p>
+        <script>pollStatus('{{ current_key }}');</script>
+    {% elif state.error %}
+        <div class="text-danger mb-3"><i class="bi bi-exclamation-triangle-fill fs-1"></i></div>
+        <h5>Erreur de chargement</h5>
+        <p class="text-muted">{{ state.error }}</p>
+        <button class="btn btn-primary" onclick="loadCompetition('{{ current_key }}')">Réessayer</button>
+    {% else %}
+        <div class="text-muted mb-3"><i class="bi bi-database fs-1"></i></div>
+        <h5>Aucune donnée</h5>
+        <p class="text-muted">Cliquez pour charger les données de cette compétition.</p>
+        <button class="btn btn-primary" onclick="loadCompetition('{{ current_key }}')">
+            <i class="bi bi-download"></i> Charger
+        </button>
+    {% endif %}
+</div>
+{% else %}
+
+<!-- Stat cards -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card-dark stat-card">
+            <div class="stat-value text-primary">{{ teams|length }}</div>
+            <div class="stat-label">Équipes</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card-dark stat-card">
+            <div class="stat-value" style="color: var(--accent-green);">{{ state.season_progress|round(0)|int }}%</div>
+            <div class="stat-label">Saison</div>
+            <div class="progress-thin mt-2">
+                <div class="progress-bar bg-success" style="width: {{ state.season_progress }}%"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card-dark stat-card">
+            {% if calendar_summary %}
+            <div class="stat-value" style="color: var(--accent-yellow);">{{ calendar_summary.remaining }}</div>
+            <div class="stat-label">Matchs restants</div>
+            {% else %}
+            <div class="stat-value text-muted">—</div>
+            <div class="stat-label">Calendrier</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card-dark stat-card">
+            <div class="stat-value text-info">50K</div>
+            <div class="stat-label">Simulations</div>
+        </div>
+    </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabClassement">
+            <i class="bi bi-list-ol"></i> Classement
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabPredictions">
+            <i class="bi bi-graph-up-arrow"></i> Prédictions
+        </button>
+    </li>
+    {% if team_stats %}
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabForme">
+            <i class="bi bi-fire"></i> Forme
+        </button>
+    </li>
+    {% endif %}
+</ul>
+
+<div class="tab-content">
+
+    <!-- Tab Classement -->
+    <div class="tab-pane fade show active" id="tabClassement">
+        <div class="card-dark">
+            <div class="table-responsive">
+                <table class="table table-dark-custom table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th class="text-center" style="width:45px">#</th>
+                            <th>Équipe</th>
+                            <th class="text-center">Pts</th>
+                            <th class="text-center">MJ</th>
+                            <th class="text-center">V</th>
+                            <th class="text-center">N</th>
+                            <th class="text-center">D</th>
+                            <th class="text-center">BP</th>
+                            <th class="text-center">BC</th>
+                            <th class="text-center">Diff</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in teams %}
+                        <tr class="{% if t.rank <= 2 %}row-promotion{% elif t.rank > teams|length - 2 %}row-relegation{% endif %}">
+                            <td class="text-center fw-bold">{{ t.rank }}</td>
+                            <td>
+                                <a href="{{ url_for('team_detail', key=current_key, team_name=t.name) }}" class="team-link">{{ t.name }}</a>
+                            </td>
+                            <td class="text-center fw-bold">{{ t.points }}</td>
+                            <td class="text-center">{{ t.matches_played }}</td>
+                            <td class="text-center text-success">{{ t.wins }}</td>
+                            <td class="text-center text-warning">{{ t.draws }}</td>
+                            <td class="text-center text-danger">{{ t.losses }}</td>
+                            <td class="text-center">{{ t.goals_for }}</td>
+                            <td class="text-center">{{ t.goals_against }}</td>
+                            <td class="text-center {% if t.goal_difference > 0 %}text-success{% elif t.goal_difference < 0 %}text-danger{% endif %}">
+                                {{ '+' if t.goal_difference > 0 }}{{ t.goal_difference }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-body py-2 px-3">
+                <small class="text-muted">
+                    <span class="d-inline-block" style="width:12px;height:12px;background:var(--accent-green);border-radius:2px;"></span> Montée
+                    <span class="ms-3 d-inline-block" style="width:12px;height:12px;background:var(--accent-red);border-radius:2px;"></span> Descente
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Prédictions -->
+    <div class="tab-pane fade" id="tabPredictions">
+        {% if predictions %}
+        <div class="card-dark">
+            <div class="table-responsive">
+                <table class="table table-dark-custom table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th class="text-center" style="width:45px">#</th>
+                            <th>Équipe</th>
+                            <th class="text-center">Pts</th>
+                            <th class="text-center">Pts prédits</th>
+                            <th class="text-center">Pos. moy.</th>
+                            <th class="text-center">% Montée</th>
+                            <th class="text-center">% Descente</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in predictions %}
+                        <tr>
+                            <td class="text-center">{{ p.current_rank }}</td>
+                            <td>
+                                <a href="{{ url_for('team_detail', key=current_key, team_name=p.team_name) }}" class="team-link">{{ p.team_name }}</a>
+                            </td>
+                            <td class="text-center">{{ p.current_points }}</td>
+                            <td class="text-center fw-bold">{{ p.predicted_final_points }}</td>
+                            <td class="text-center">{{ p.avg_final_position }}</td>
+                            <td class="text-center">
+                                <div class="d-flex align-items-center justify-content-center gap-1">
+                                    {{ p.promotion_emoji }}
+                                    <span class="{% if p.promotion_probability >= 50 %}text-success fw-bold{% elif p.promotion_probability >= 20 %}text-warning{% else %}text-muted{% endif %}">
+                                        {{ p.promotion_probability }}%
+                                    </span>
+                                </div>
+                                <div class="progress-thin mt-1">
+                                    <div class="progress-bar bg-success" style="width: {{ p.promotion_probability }}%"></div>
+                                </div>
+                            </td>
+                            <td class="text-center">
+                                <div class="d-flex align-items-center justify-content-center gap-1">
+                                    {{ p.relegation_emoji }}
+                                    <span class="{% if p.relegation_probability >= 50 %}text-danger fw-bold{% elif p.relegation_probability >= 20 %}text-warning{% else %}text-muted{% endif %}">
+                                        {{ p.relegation_probability }}%
+                                    </span>
+                                </div>
+                                <div class="progress-thin mt-1">
+                                    <div class="progress-bar bg-danger" style="width: {{ p.relegation_probability }}%"></div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% else %}
+        <div class="card-dark p-4 text-center text-muted">Aucune prédiction disponible.</div>
+        {% endif %}
+    </div>
+
+    <!-- Tab Forme -->
+    {% if team_stats %}
+    <div class="tab-pane fade" id="tabForme">
+        <div class="card-dark">
+            <div class="table-responsive">
+                <table class="table table-dark-custom table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th class="text-center" style="width:45px">#</th>
+                            <th>Équipe</th>
+                            <th class="text-center">Forme</th>
+                            <th class="text-center">Série</th>
+                            <th class="text-center">Dom. G/N/P</th>
+                            <th class="text-center">Dom. Buts</th>
+                            <th class="text-center">Ext. G/N/P</th>
+                            <th class="text-center">Ext. Buts</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in teams %}
+                        {% set st = team_stats.get(t.name) %}
+                        {% if st %}
+                        <tr>
+                            <td class="text-center">{{ t.rank }}</td>
+                            <td>
+                                <a href="{{ url_for('team_detail', key=current_key, team_name=t.name) }}" class="team-link">{{ t.name }}</a>
+                            </td>
+                            <td class="text-center">
+                                {% if st.form_score >= 2.2 %}
+                                <span class="text-success fw-bold">{{ st.form_score }} <i class="bi bi-arrow-up-short"></i></span>
+                                {% elif st.form_score >= 1.2 %}
+                                <span class="text-warning">{{ st.form_score }} <i class="bi bi-dash"></i></span>
+                                {% else %}
+                                <span class="text-danger">{{ st.form_score }} <i class="bi bi-arrow-down-short"></i></span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% for c in st.form_label %}
+                                <span class="form-dot form-{{ c }}">{{ c }}</span>
+                                {% endfor %}
+                            </td>
+                            <td class="text-center">{{ st.home_wins }}/{{ st.home_draws }}/{{ st.home_losses }}</td>
+                            <td class="text-center">{{ st.home_goals_for }}/{{ st.home_goals_against }}</td>
+                            <td class="text-center">{{ st.away_wins }}/{{ st.away_draws }}/{{ st.away_losses }}</td>
+                            <td class="text-center">{{ st.away_goals_for }}/{{ st.away_goals_against }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-body py-2 px-3">
+                <small class="text-muted">
+                    <span class="form-dot form-V" style="width:16px;height:16px;line-height:16px;font-size:0.65rem;">V</span> Victoire
+                    <span class="form-dot form-N ms-1" style="width:16px;height:16px;line-height:16px;font-size:0.65rem;">N</span> Nul
+                    <span class="form-dot form-D ms-1" style="width:16px;height:16px;line-height:16px;font-size:0.65rem;">D</span> Défaite
+                    &nbsp;│&nbsp; Forme = score pondéré (0 = pire, 3 = meilleur)
+                </small>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+{% endif %}
+{% endblock %}
