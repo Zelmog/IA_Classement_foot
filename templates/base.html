@@ -59,8 +59,8 @@
         .badge-mid { background: rgba(88, 166, 255, 0.15); color: var(--accent-blue); }
 
         /* Progress bars */
-        .progress-thin { height: 6px; background: var(--card-border); border-radius: 3px; }
-        .progress-thin .progress-bar { border-radius: 3px; }
+        .progress-thin { height: 6px; background: var(--card-border); border-radius: 3px; overflow: hidden; }
+        .progress-thin .progress-bar { height: 100%; border-radius: 3px; min-width: 0; }
 
         /* Form indicators */
         .form-dot { display: inline-block; width: 22px; height: 22px; border-radius: 4px;

@@ -189,6 +189,20 @@ def competition(key):
         return render_template("404.html", competitions=COMPETITIONS), 404
 
     state = states[key]
+    # Séparer matchs joués et à venir, triés par date
+    upcoming = []
+    recent = []
+    if state.fixtures:
+        def _date_sort_key(f):
+            """Parse DD/MM/YYYY into sortable tuple."""
+            try:
+                parts = f.date.split()[0].split("/")
+                return (int(parts[2]), int(parts[1]), int(parts[0]))
+            except (IndexError, ValueError):
+                return (9999, f.matchday, 0)
+        upcoming = sorted([f for f in state.fixtures if not f.played], key=_date_sort_key)
+        recent = sorted([f for f in state.fixtures if f.played], key=_date_sort_key, reverse=True)
+
     return render_template(
         "dashboard.html",
         competitions=COMPETITIONS,
@@ -198,6 +212,8 @@ def competition(key):
         predictions=[_prediction_to_dict(p) for p in state.predictions] if state.predictions else [],
         team_stats={name: _stats_to_dict(s) for name, s in state.team_stats.items()} if state.team_stats else {},
         calendar_summary=state.calendar_summary,
+        upcoming=upcoming,
+        recent=recent,
     )
 
 
