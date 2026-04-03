@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import datetime as _dt
 import json
 import threading
 import time
@@ -20,7 +21,7 @@ from typing import Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request
 
-from modules.config import COMPETITIONS, N_SIMULATIONS, PROMOTION_SPOTS, RELEGATION_SPOTS, TOTAL_MATCHES_PER_TEAM
+from modules.config import COMPETITIONS, DIVISIONS, N_SIMULATIONS, PROMOTION_SPOTS, RELEGATION_SPOTS, TOTAL_MATCHES_PER_TEAM
 from modules.models import Fixture, PredictionResult, Team, TeamStats
 from modules.predictor import PromotionPredictor
 from modules.scraper import (
@@ -48,7 +49,28 @@ class CompetitionState:
         self.calendar_summary: Optional[dict] = None
         self.loading = False
         self.last_update: Optional[str] = None
+        self.last_update_dt: Optional[_dt.datetime] = None
         self.error: Optional[str] = None
+
+    def needs_refresh(self) -> bool:
+        """Vérifie si les données doivent être rafraîchies.
+
+        Retourne True si :
+        - Aucune donnée chargée
+        - Le dernier chargement date d'avant le dernier dimanche 21h
+        """
+        if not self.teams or not self.last_update_dt:
+            return True
+
+        now = _dt.datetime.now()
+        # Trouver le dernier dimanche 21h
+        days_since_sunday = (now.weekday() + 1) % 7  # 0=dimanche
+        last_sunday_21 = now.replace(hour=21, minute=0, second=0, microsecond=0)
+        last_sunday_21 -= _dt.timedelta(days=days_since_sunday)
+        if now < last_sunday_21:
+            last_sunday_21 -= _dt.timedelta(weeks=1)
+
+        return self.last_update_dt < last_sunday_21
 
 
 # Initialiser les compétitions
@@ -110,6 +132,7 @@ def _load_competition(state: CompetitionState) -> None:
         state.predictions = predictor.simulate()
 
         state.last_update = time.strftime("%d/%m/%Y %H:%M")
+        state.last_update_dt = _dt.datetime.now()
 
     except Exception as e:
         state.error = str(e)
@@ -177,6 +200,7 @@ def index():
     return render_template(
         "index.html",
         competitions=COMPETITIONS,
+        divisions=DIVISIONS,
         current_key=first_key,
         states=states,
     )
@@ -186,7 +210,7 @@ def index():
 def competition(key):
     """Dashboard d'une compétition."""
     if key not in states:
-        return render_template("404.html", competitions=COMPETITIONS), 404
+        return render_template("404.html", competitions=COMPETITIONS, divisions=DIVISIONS), 404
 
     state = states[key]
     # Séparer matchs joués et à venir, triés par date
@@ -206,6 +230,7 @@ def competition(key):
     return render_template(
         "dashboard.html",
         competitions=COMPETITIONS,
+        divisions=DIVISIONS,
         current_key=key,
         state=state,
         teams=[_team_to_dict(t) for t in state.teams],
@@ -221,7 +246,7 @@ def competition(key):
 def team_detail(key, team_name):
     """Page détaillée d'une équipe."""
     if key not in states:
-        return render_template("404.html", competitions=COMPETITIONS), 404
+        return render_template("404.html", competitions=COMPETITIONS, divisions=DIVISIONS), 404
 
     state = states[key]
     team = next((t for t in state.teams if t.name == team_name), None)
@@ -229,11 +254,12 @@ def team_detail(key, team_name):
     stats = state.team_stats.get(team_name) if state.team_stats else None
 
     if not team:
-        return render_template("404.html", competitions=COMPETITIONS), 404
+        return render_template("404.html", competitions=COMPETITIONS, divisions=DIVISIONS), 404
 
     return render_template(
         "team.html",
         competitions=COMPETITIONS,
+        divisions=DIVISIONS,
         current_key=key,
         state=state,
         team=_team_to_dict(team),
@@ -268,6 +294,13 @@ def api_load(key):
     if state.loading:
         return jsonify({"status": "already_loading"})
 
+    # Vérifier le paramètre force (pour le bouton Actualiser)
+    force = request.args.get("force", "false").lower() == "true"
+
+    # Si les données sont en cache et encore valides, pas besoin de recharger
+    if not force and not state.needs_refresh():
+        return jsonify({"status": "cached", "last_update": state.last_update})
+
     thread = threading.Thread(target=_load_competition, args=(state,), daemon=True)
     thread.start()
     return jsonify({"status": "started"})
@@ -294,20 +327,53 @@ def api_data(key):
 
 # ── Chargement automatique au démarrage ──────────────────────────────
 def _auto_startup():
-    """Charge toutes les compétitions au démarrage du serveur."""
+    """Charge les compétitions qui n'ont pas de cache valide au démarrage."""
     time.sleep(2)  # Laisser le serveur démarrer
     for key, state in states.items():
-        print(f"⏳ Chargement auto : {state.name}...")
-        _load_competition(state)
-        if state.error:
-            print(f"❌ Erreur {state.name}: {state.error}")
+        if state.needs_refresh():
+            print(f"⏳ Chargement auto : {state.name}...")
+            _load_competition(state)
+            if state.error:
+                print(f"❌ Erreur {state.name}: {state.error}")
+            else:
+                print(f"✅ {state.name} chargé ({len(state.teams)} équipes)")
         else:
-            print(f"✅ {state.name} chargé ({len(state.teams)} équipes)")
+            print(f"✅ {state.name} en cache (mis à jour le {state.last_update})")
 
 
 # Lancer le chargement au démarrage
 startup_thread = threading.Thread(target=_auto_startup, daemon=True)
 startup_thread.start()
+
+
+# ── Mise à jour automatique hebdomadaire ─────────────────────────────
+def _scheduled_refresh():
+    """Rafraîchit toutes les compétitions chaque dimanche à 21h."""
+    while True:
+        now = _dt.datetime.now()
+        # Prochain dimanche à 21h
+        days_until_sunday = (6 - now.weekday()) % 7
+        next_sunday = now.replace(hour=21, minute=0, second=0, microsecond=0)
+        next_sunday += _dt.timedelta(days=days_until_sunday)
+        if next_sunday <= now:
+            next_sunday += _dt.timedelta(weeks=1)
+
+        wait_seconds = (next_sunday - now).total_seconds()
+        print(f"🕐 Prochaine mise à jour auto : {next_sunday.strftime('%A %d/%m/%Y %H:%M')} (dans {wait_seconds/3600:.1f}h)")
+        time.sleep(wait_seconds)
+
+        print("🔄 Mise à jour automatique (dimanche 21h)...")
+        for key, state in states.items():
+            if not state.loading:
+                _load_competition(state)
+                if state.error:
+                    print(f"❌ MAJ auto {state.name}: {state.error}")
+                else:
+                    print(f"✅ MAJ auto {state.name} OK ({len(state.teams)} équipes)")
+
+
+scheduler_thread = threading.Thread(target=_scheduled_refresh, daemon=True)
+scheduler_thread.start()
 
 
 # ── Point d'entrée ───────────────────────────────────────────────────

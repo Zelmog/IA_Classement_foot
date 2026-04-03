@@ -9,11 +9,14 @@ import json
 import os
 import re
 import datetime
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from modules.config import (
     COMPETITION_URL,
@@ -25,6 +28,21 @@ from modules.models import Fixture, Team, TeamStats
 # Base URL de l'API FFF DOFA
 # ============================================================
 API_BASE = "https://api-dofa.fff.fr/api"
+
+
+def _new_session() -> requests.Session:
+    """Crée une session HTTP avec retry automatique."""
+    s = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+    )
+    s.mount("https://", HTTPAdapter(max_retries=retry))
+    return s
+
+
+_session = _new_session()
 
 
 def _log(msg: str) -> None:
@@ -72,20 +90,29 @@ def _extract_params(url: str) -> Tuple[str, str, str]:
     return comp_id, phase, poule
 
 
-def _api_get(path: str) -> dict:
+def _api_get(path: str, retries: int = 4) -> dict:
     """
-    Effectue un GET sur l'API FFF DOFA.
+    Effectue un GET sur l'API FFF DOFA avec retry et reset de session SSL.
 
-    Args:
-        path: Chemin relatif (ex: /compets/435749/phases/1/poules/1/classement_journees)
-
-    Returns:
-        Réponse JSON sous forme de dict.
+    En cas d'erreur SSL, ferme la session et en recrée une nouvelle
+    pour forcer un nouveau handshake TLS (corrige DECRYPTION_FAILED sur Oracle Cloud).
     """
+    global _session
     url = f"{API_BASE}{path}"
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
+    for attempt in range(retries):
+        try:
+            resp = _session.get(url, timeout=60)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+            if attempt < retries - 1:
+                wait = 2 * (attempt + 1)
+                _log(f"⚠️  Erreur réseau (tentative {attempt + 1}/{retries}), reset session, retry dans {wait}s...")
+                _session.close()
+                _session = _new_session()
+                time.sleep(wait)
+            else:
+                raise
 
 
 def _fetch_ranking(comp_id: str, phase: str, poule: str) -> Optional[List[Team]]:
@@ -179,6 +206,7 @@ def _fetch_all_matchs(comp_id: str, phase: str, poule: str) -> Optional[List[Fix
         if "hydra:next" not in view:
             break
         page += 1
+        time.sleep(0.5)  # Pause entre les pages pour éviter les erreurs SSL
 
     all_fixtures.sort(key=lambda f: (f.matchday, f.date))
     return all_fixtures if all_fixtures else None
@@ -233,14 +261,14 @@ def scrape_ranking(url: str = COMPETITION_URL, external_driver=None) -> List[Tea
         teams = _fetch_ranking(comp_id, phase, poule)
         if teams:
             _log(f"✅ {len(teams)} équipes récupérées avec succès !")
-            _save_backup(teams)
+            _save_backup(teams, comp_id)
             return teams
     except Exception as e:
         _log(f"❌ Erreur API classement : {e}")
 
     # Tentative 2 : Sauvegarde
     _log("\n⚠️  API échouée. Tentative de chargement depuis la sauvegarde...")
-    teams = load_from_backup()
+    teams = load_from_backup(comp_id=comp_id)
     if teams:
         _log("✅ Données chargées depuis la sauvegarde.")
         return teams
@@ -334,14 +362,14 @@ def scrape_competition(url: str):
         _log(f"📡 API FFF - classement (compet={comp_id}, phase={phase}, poule={poule})...")
         teams = _fetch_ranking(comp_id, phase, poule)
         if teams:
-            _save_backup(teams)
+            _save_backup(teams, comp_id)
             _log(f"✅ {len(teams)} équipes: {', '.join(t.name for t in teams[:4])}...")
     except Exception as e:
         _log(f"❌ Erreur API classement: {e}")
 
     if not teams:
         _log("⚠️  Tentative de chargement depuis la sauvegarde...")
-        teams = load_from_backup()
+        teams = load_from_backup(comp_id=comp_id)
     if not teams:
         teams = _get_demo_data()
     if not teams:
@@ -367,10 +395,17 @@ def scrape_competition(url: str):
 # ============================================================
 
 
-def _save_backup(teams: List[Team]) -> None:
-    """Sauvegarde les données scrapées dans un fichier JSON."""
+def _backup_path_for(comp_id: str = "") -> Path:
+    """Retourne le chemin du fichier de sauvegarde pour une compétition."""
+    if comp_id:
+        return Path(DATA_BACKUP_FILE).parent / f"dernier_classement_{comp_id}.json"
+    return Path(DATA_BACKUP_FILE)
+
+
+def _save_backup(teams: List[Team], comp_id: str = "") -> None:
+    """Sauvegarde les données scrapées dans un fichier JSON par compétition."""
     try:
-        backup_path = Path(DATA_BACKUP_FILE)
+        backup_path = _backup_path_for(comp_id)
         backup_path.parent.mkdir(parents=True, exist_ok=True)
 
         data = []
@@ -397,21 +432,23 @@ def _save_backup(teams: List[Team]) -> None:
         _log(f"⚠️  Impossible de sauvegarder les données : {e}")
 
 
-def load_from_backup(path: str = DATA_BACKUP_FILE) -> Optional[List[Team]]:
+def load_from_backup(path: str = DATA_BACKUP_FILE, comp_id: str = "") -> Optional[List[Team]]:
     """
     Charge les données depuis un fichier JSON de sauvegarde.
 
     Args:
-        path: Chemin vers le fichier JSON.
+        path: Chemin vers le fichier JSON (ignoré si comp_id fourni).
+        comp_id: ID de la compétition pour charger le bon fichier.
 
     Returns:
         Liste de Team ou None si le fichier n'existe pas.
     """
     try:
-        if not os.path.exists(path):
+        backup_path = str(_backup_path_for(comp_id)) if comp_id else path
+        if not os.path.exists(backup_path):
             return None
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(backup_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         teams = []

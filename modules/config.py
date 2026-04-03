@@ -14,23 +14,42 @@ COMPETITION_URL = (
 COMPETITION_NAME = "SENIORS DÉPARTEMENTAL 3 - Gironde"
 
 # ============================================================
-# Compétitions multiples (Équipe A et Équipe B)
+# Compétitions multiples (Division 1 Poule A/B, Division 3)
 # ============================================================
 COMPETITIONS = {
-    "A": {
-        "name": "Équipe A",
+    "D1-A": {
+        "name": "Division 1 — Poule A",
+        "division": "Division 1",
+        "poule": "Poule A",
         "url": (
             "https://gironde.fff.fr/competitions"
             "?tab=ranking&id=435747&phase=1&poule=1&type=ch"
         ),
     },
-    "B": {
-        "name": "Équipe B",
+    "D1-B": {
+        "name": "Division 1 — Poule B",
+        "division": "Division 1",
+        "poule": "Poule B",
+        "url": (
+            "https://gironde.fff.fr/competitions"
+            "?tab=ranking&id=435747&phase=1&poule=2&type=ch"
+        ),
+    },
+    "D3-A": {
+        "name": "Division 3 — Poule A",
+        "division": "Division 3",
+        "poule": "Poule A",
         "url": (
             "https://gironde.fff.fr/competitions"
             "?tab=ranking&id=435749&phase=1&poule=1&type=ch"
         ),
     },
+}
+
+# Structure de navigation (divisions → poules)
+DIVISIONS = {
+    "Division 1": ["D1-A", "D1-B"],
+    "Division 3": ["D3-A"],
 }
 
 # ============================================================
@@ -62,7 +81,7 @@ LOSS_POINTS = 0
 # ============================================================
 
 # Temps d'attente maximum (secondes) pour le chargement de la page
-SCRAPER_TIMEOUT = 120
+SCRAPER_TIMEOUT = 240
 
 # Fichier de sauvegarde des données scrapées (fallback)
 DATA_BACKUP_FILE = "data/dernier_classement.json"

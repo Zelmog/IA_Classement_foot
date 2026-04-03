@@ -112,12 +112,38 @@
     <nav class="navbar navbar-expand-lg sticky-top">
         <div class="container-fluid">
             <a class="navbar-brand" href="/"><i class="bi bi-trophy-fill"></i> IA Foot</a>
-            <div class="d-flex align-items-center gap-2">
-                {% for k, comp in competitions.items() %}
-                <a href="/{{ k }}/" class="comp-btn {% if current_key == k %}active{% endif %}">
-                    {{ comp.name }}
-                </a>
-                {% endfor %}
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse justify-content-end" id="navbarNav">
+                <div class="d-flex align-items-center gap-2">
+                    {% for div_name, div_keys in divisions.items() %}
+                        {% if div_keys|length > 1 %}
+                        {# Dropdown pour les divisions multi-poules #}
+                        <div class="dropdown">
+                            <button class="comp-btn dropdown-toggle {% if current_key in div_keys %}active{% endif %}"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                                {{ div_name }}
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-dark">
+                                {% for k in div_keys %}
+                                <li>
+                                    <a class="dropdown-item {% if current_key == k %}active{% endif %}" href="/{{ k }}/">
+                                        {{ competitions[k].poule }}
+                                    </a>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% else %}
+                        {# Lien direct pour les divisions mono-poule #}
+                        {% set k = div_keys[0] %}
+                        <a href="/{{ k }}/" class="comp-btn {% if current_key == k %}active{% endif %}">
+                            {{ div_name }}
+                        </a>
+                        {% endif %}
+                    {% endfor %}
+                </div>
             </div>
         </div>
     </nav>
@@ -151,7 +177,10 @@
             showLoading('Scraping des données — cela peut prendre 1-2 minutes...');
             const resp = await fetch(`/api/${key}/load`, { method: 'POST' });
             const data = await resp.json();
-            if (data.status === 'started' || data.status === 'already_loading') {
+            if (data.status === 'cached') {
+                hideLoading();
+                location.reload();
+            } else if (data.status === 'started' || data.status === 'already_loading') {
                 pollStatus(key);
             }
         }
@@ -170,9 +199,14 @@
             setTimeout(poll, 3000);
         }
 
-        // Refresh data
+        // Force refresh data (ignore cache)
         async function refreshData(key) {
-            loadCompetition(key);
+            showLoading('Actualisation des données...');
+            const resp = await fetch(`/api/${key}/load?force=true`, { method: 'POST' });
+            const data = await resp.json();
+            if (data.status === 'started' || data.status === 'already_loading') {
+                pollStatus(key);
+            }
         }
     </script>
     {% block extra_js %}{% endblock %}

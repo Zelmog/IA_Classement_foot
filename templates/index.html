@@ -8,36 +8,44 @@
         <p class="text-muted">Prédiction des chances de montée et descente par simulation Monte Carlo</p>
     </div>
 
-    {% for key, comp in competitions.items() %}
-    <div class="col-md-6">
-        <div class="card-dark p-4">
-            <h4 class="fw-bold mb-3">{{ comp.name }}</h4>
-            {% set s = states[key] %}
-            {% if s.teams %}
-                <div class="d-flex align-items-center gap-2 mb-3">
-                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Données chargées</span>
-                    <span class="text-muted small">{{ s.last_update }}</span>
+    {% for div_name, div_keys in divisions.items() %}
+    <div class="col-12">
+        <h4 class="fw-bold mb-3"><i class="bi bi-flag-fill text-primary"></i> {{ div_name }}</h4>
+        <div class="row g-3">
+            {% for key in div_keys %}
+            {% set comp = competitions[key] %}
+            <div class="col-md-{{ 6 if div_keys|length > 1 else 12 }}">
+                <div class="card-dark p-4">
+                    <h5 class="fw-bold mb-3">{{ comp.poule }}</h5>
+                    {% set s = states[key] %}
+                    {% if s.teams %}
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Données chargées</span>
+                            <span class="text-muted small">{{ s.last_update }}</span>
+                        </div>
+                        <p class="text-muted">{{ s.teams|length }} équipes &bull; {{ s.season_progress|round(0)|int }}% de la saison</p>
+                        <a href="/{{ key }}/" class="btn btn-primary">
+                            <i class="bi bi-bar-chart-fill"></i> Voir le dashboard
+                        </a>
+                    {% elif s.loading %}
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="spinner-border spinner-border-sm text-primary"></div>
+                            <span>Chargement en cours...</span>
+                        </div>
+                    {% elif s.error %}
+                        <div class="alert alert-danger mb-3">{{ s.error }}</div>
+                        <button class="btn btn-outline-primary" onclick="loadCompetition('{{ key }}')">
+                            <i class="bi bi-arrow-clockwise"></i> Réessayer
+                        </button>
+                    {% else %}
+                        <p class="text-muted mb-3">Les données n'ont pas encore été chargées.</p>
+                        <button class="btn btn-primary" onclick="loadCompetition('{{ key }}')">
+                            <i class="bi bi-download"></i> Charger les données
+                        </button>
+                    {% endif %}
                 </div>
-                <p class="text-muted">{{ s.teams|length }} équipes &bull; {{ s.season_progress|round(0)|int }}% de la saison</p>
-                <a href="/{{ key }}/" class="btn btn-primary">
-                    <i class="bi bi-bar-chart-fill"></i> Voir le dashboard
-                </a>
-            {% elif s.loading %}
-                <div class="d-flex align-items-center gap-2">
-                    <div class="spinner-border spinner-border-sm text-primary"></div>
-                    <span>Chargement en cours...</span>
-                </div>
-            {% elif s.error %}
-                <div class="alert alert-danger mb-3">{{ s.error }}</div>
-                <button class="btn btn-outline-primary" onclick="loadCompetition('{{ key }}')">
-                    <i class="bi bi-arrow-clockwise"></i> Réessayer
-                </button>
-            {% else %}
-                <p class="text-muted mb-3">Les données n'ont pas encore été chargées.</p>
-                <button class="btn btn-primary" onclick="loadCompetition('{{ key }}')">
-                    <i class="bi bi-download"></i> Charger les données
-                </button>
-            {% endif %}
+            </div>
+            {% endfor %}
         </div>
     </div>
     {% endfor %}
@@ -45,7 +53,7 @@
 
 <script>
     // Auto-poll if any competition is loading
-    {% for key, comp in competitions.items() %}
+    {% for key in competitions %}
     {% if states[key].loading %}
     pollStatus('{{ key }}');
     {% endif %}
