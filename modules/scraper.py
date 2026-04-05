@@ -155,6 +155,10 @@ def _fetch_all_matchs(comp_id: str, phase: str, poule: str) -> Optional[List[Fix
     """
     Récupère tous les matchs (paginés) depuis l'API DOFA.
 
+    Gère deux formats de réponse :
+    - dict avec 'hydra:member' (ancien format)
+    - list directe (nouveau format)
+
     Returns:
         Liste de Fixture (joués et à venir), ou None si échec.
     """
@@ -164,7 +168,15 @@ def _fetch_all_matchs(comp_id: str, phase: str, poule: str) -> Optional[List[Fix
     while True:
         path = f"/compets/{comp_id}/phases/{phase}/poules/{poule}/matchs?page={page}"
         data = _api_get(path)
-        members = data.get("hydra:member", [])
+
+        # Gérer les deux formats de réponse API
+        if isinstance(data, list):
+            members = data
+        elif isinstance(data, dict):
+            members = data.get("hydra:member", [])
+        else:
+            break
+
         if not members:
             break
 
@@ -201,10 +213,15 @@ def _fetch_all_matchs(comp_id: str, phase: str, poule: str) -> Optional[List[Fix
             )
             all_fixtures.append(fixture)
 
-        # Pagination
-        view = data.get("hydra:view", {})
-        if "hydra:next" not in view:
-            break
+        # Pagination : ancien format (dict avec hydra:view) ou nouveau (list)
+        if isinstance(data, dict):
+            view = data.get("hydra:view", {})
+            if "hydra:next" not in view:
+                break
+        else:
+            # Format liste : si la page retourne moins de 30 items, c'est la dernière
+            if len(members) < 30:
+                break
         page += 1
         time.sleep(0.5)  # Pause entre les pages pour éviter les erreurs SSL
 
