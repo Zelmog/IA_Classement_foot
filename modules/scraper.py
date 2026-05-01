@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+import ssl
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib3.util.ssl_ import create_urllib3_context
 
 from modules.config import (
     COMPETITION_URL,
@@ -30,15 +32,35 @@ from modules.models import Fixture, Team, TeamStats
 API_BASE = "https://api-dofa.fff.fr/api"
 
 
+class _NoTicketAdapter(HTTPAdapter):
+    """Adaptateur HTTPS qui désactive les session tickets TLS.
+
+    Corrige l'erreur DECRYPTION_FAILED_OR_BAD_RECORD_MAC causée par
+    la reprise de session TLS défaillante entre Oracle Cloud et api-dofa.fff.fr.
+    """
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = create_urllib3_context()
+        ctx.options |= ssl.OP_NO_TICKET  # Désactive les TLS session tickets
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        ctx = create_urllib3_context()
+        ctx.options |= ssl.OP_NO_TICKET
+        proxy_kwargs["ssl_context"] = ctx
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+
 def _new_session() -> requests.Session:
-    """Crée une session HTTP avec retry automatique."""
+    """Crée une session HTTP avec retry automatique et sans session tickets TLS."""
     s = requests.Session()
     retry = Retry(
         total=3,
         backoff_factor=1,
         status_forcelist=[500, 502, 503, 504],
     )
-    s.mount("https://", HTTPAdapter(max_retries=retry))
+    s.mount("https://", _NoTicketAdapter(max_retries=retry))
     return s
 
 
@@ -379,14 +401,14 @@ def scrape_competition(url: str):
         _log(f"📡 API FFF - classement (compet={comp_id}, phase={phase}, poule={poule})...")
         teams = _fetch_ranking(comp_id, phase, poule)
         if teams:
-            _save_backup(teams, comp_id)
+            _save_backup(teams, comp_id, poule)
             _log(f"✅ {len(teams)} équipes: {', '.join(t.name for t in teams[:4])}...")
     except Exception as e:
         _log(f"❌ Erreur API classement: {e}")
 
     if not teams:
         _log("⚠️  Tentative de chargement depuis la sauvegarde...")
-        teams = load_from_backup(comp_id=comp_id)
+        teams = load_from_backup(comp_id=comp_id, poule=poule)
     if not teams:
         teams = _get_demo_data()
     if not teams:
@@ -412,17 +434,19 @@ def scrape_competition(url: str):
 # ============================================================
 
 
-def _backup_path_for(comp_id: str = "") -> Path:
+def _backup_path_for(comp_id: str = "", poule: str = "") -> Path:
     """Retourne le chemin du fichier de sauvegarde pour une compétition."""
+    if comp_id and poule:
+        return Path(DATA_BACKUP_FILE).parent / f"dernier_classement_{comp_id}_p{poule}.json"
     if comp_id:
         return Path(DATA_BACKUP_FILE).parent / f"dernier_classement_{comp_id}.json"
     return Path(DATA_BACKUP_FILE)
 
 
-def _save_backup(teams: List[Team], comp_id: str = "") -> None:
+def _save_backup(teams: List[Team], comp_id: str = "", poule: str = "") -> None:
     """Sauvegarde les données scrapées dans un fichier JSON par compétition."""
     try:
-        backup_path = _backup_path_for(comp_id)
+        backup_path = _backup_path_for(comp_id, poule)
         backup_path.parent.mkdir(parents=True, exist_ok=True)
 
         data = []
@@ -449,19 +473,20 @@ def _save_backup(teams: List[Team], comp_id: str = "") -> None:
         _log(f"⚠️  Impossible de sauvegarder les données : {e}")
 
 
-def load_from_backup(path: str = DATA_BACKUP_FILE, comp_id: str = "") -> Optional[List[Team]]:
+def load_from_backup(path: str = DATA_BACKUP_FILE, comp_id: str = "", poule: str = "") -> Optional[List[Team]]:
     """
     Charge les données depuis un fichier JSON de sauvegarde.
 
     Args:
         path: Chemin vers le fichier JSON (ignoré si comp_id fourni).
         comp_id: ID de la compétition pour charger le bon fichier.
+        poule: Numéro de la poule pour charger le bon fichier.
 
     Returns:
         Liste de Team ou None si le fichier n'existe pas.
     """
     try:
-        backup_path = str(_backup_path_for(comp_id)) if comp_id else path
+        backup_path = str(_backup_path_for(comp_id, poule)) if comp_id else path
         if not os.path.exists(backup_path):
             return None
 
